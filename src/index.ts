@@ -5,6 +5,8 @@ import pino from "pino";
 import { loadConfig } from "./config/loader.js";
 import { Gateway } from "./gateway.js";
 import { PairingManager } from "./auth/pairing.js";
+import { spawn } from "node:child_process";
+import { createWriteStream } from "node:fs";
 import {
   writeFileSync,
   existsSync,
@@ -22,42 +24,119 @@ program
   .description("Gateway bridging chat platforms to Claude Code CLI")
   .version("0.1.0");
 
+/** Resolve the data directory from config or default */
+function getDataDir(configPath?: string): string {
+  try {
+    const config = loadConfig(configPath);
+    return resolve(config.gateway.dataDir.replace(/^~/, process.env.HOME ?? ""));
+  } catch {
+    return resolve(process.env.HOME ?? "~", ".claude-gateway");
+  }
+}
+
+/** Resolve logs directory and ensure it exists */
+function getLogDir(dataDir: string): string {
+  const logDir = join(dataDir, "logs");
+  mkdirSync(logDir, { recursive: true });
+  return logDir;
+}
+
+/** Read the lock file and return PID if process is alive */
+function getRunningPid(dataDir: string): number | null {
+  const lockPath = join(dataDir, "gateway.lock");
+  if (!existsSync(lockPath)) return null;
+  try {
+    const lockData = JSON.parse(readFileSync(lockPath, "utf-8"));
+    process.kill(lockData.pid, 0); // throws if dead
+    return lockData.pid;
+  } catch {
+    // stale or invalid lock
+    try { unlinkSync(lockPath); } catch {}
+    return null;
+  }
+}
+
 // --- start ---
 program
   .command("start")
-  .description("Start the gateway (foreground)")
+  .description("Start the gateway")
   .option("-c, --config <path>", "Path to config file")
   .option("-v, --verbose", "Enable debug logging")
-  .action(async (opts: { config?: string; verbose?: boolean }) => {
+  .option("-f, --foreground", "Run in foreground (default: background daemon)")
+  .action(async (opts: { config?: string; verbose?: boolean; foreground?: boolean }) => {
+    const dataDir = getDataDir(opts.config);
+
+    // Check if already running
+    const existingPid = getRunningPid(dataDir);
+    if (existingPid) {
+      console.error(`Gateway already running (PID ${existingPid}). Use 'claude-gateway restart' to restart.`);
+      process.exit(1);
+    }
+
+    // Background mode (default)
+    if (!opts.foreground) {
+      const logDir = getLogDir(dataDir);
+      const logFile = join(logDir, "gateway.log");
+
+      const args = [process.argv[1], "start", "--foreground"];
+      if (opts.config) args.push("--config", opts.config);
+      if (opts.verbose) args.push("--verbose");
+
+      const out = createWriteStream(logFile, { flags: "a" });
+      const child = spawn(process.argv[0], args, {
+        detached: true,
+        stdio: ["ignore", out, out],
+        env: { ...process.env },
+      });
+
+      child.unref();
+
+      // Wait briefly to check if process started OK
+      await new Promise((r) => setTimeout(r, 1000));
+
+      try {
+        process.kill(child.pid!, 0);
+        console.log(`Gateway started (PID ${child.pid})`);
+        console.log(`Logs: ${logFile}`);
+      } catch {
+        console.error("Gateway failed to start. Check logs:");
+        console.error(`  tail -f ${logFile}`);
+        process.exit(1);
+      }
+
+      process.exit(0);
+    }
+
+    // Foreground mode
     const config = loadConfig(opts.config);
     if (opts.verbose) config.gateway.logLevel = "debug";
 
+    // In foreground, log to both file and console
+    const logDir = getLogDir(dataDir);
+    const logFile = join(logDir, "gateway.log");
+
     const log = pino({
       level: config.gateway.logLevel,
-      transport:
-        config.gateway.logFormat === "pretty"
-          ? { target: "pino-pretty", options: { translateTime: "HH:MM:ss" } }
-          : undefined,
+      transport: {
+        targets: [
+          // Console (pretty)
+          {
+            target: "pino-pretty",
+            options: { translateTime: "HH:MM:ss" },
+            level: config.gateway.logLevel,
+          },
+          // File (JSON)
+          {
+            target: "pino/file",
+            options: { destination: logFile, mkdir: true },
+            level: config.gateway.logLevel,
+          },
+        ],
+      },
     });
 
-    const dataDir = config.gateway.dataDir.replace(/^~/, process.env.HOME ?? "");
     const lockPath = join(resolve(dataDir), "gateway.lock");
     mkdirSync(resolve(dataDir), { recursive: true });
-
-    if (existsSync(lockPath)) {
-      try {
-        const lockData = JSON.parse(readFileSync(lockPath, "utf-8"));
-        try {
-          process.kill(lockData.pid, 0);
-          console.error(`Gateway already running (PID ${lockData.pid}).`);
-          process.exit(1);
-        } catch {
-          log.warn("Removing stale lock file");
-        }
-      } catch {
-        // ignore malformed lock file
-      }
-    }
 
     writeFileSync(
       lockPath,
@@ -69,11 +148,7 @@ program
     const shutdown = async (signal: string) => {
       log.info({ signal }, "Received signal, shutting down...");
       await gateway.stop();
-      try {
-        unlinkSync(lockPath);
-      } catch {
-        // ignore
-      }
+      try { unlinkSync(lockPath); } catch {}
       process.exit(0);
     };
 
@@ -84,13 +159,107 @@ program
       await gateway.start();
     } catch (err) {
       log.fatal({ err }, "Failed to start gateway");
-      try {
-        unlinkSync(lockPath);
-      } catch {
-        // ignore
-      }
+      try { unlinkSync(lockPath); } catch {}
       process.exit(1);
     }
+  });
+
+// --- stop ---
+program
+  .command("stop")
+  .description("Stop the running gateway")
+  .action(() => {
+    const dataDir = getDataDir();
+    const pid = getRunningPid(dataDir);
+    if (!pid) {
+      console.log("Gateway is not running.");
+      return;
+    }
+    process.kill(pid, "SIGTERM");
+    console.log(`Sent SIGTERM to gateway (PID ${pid}).`);
+
+    // Wait for it to actually stop
+    let attempts = 0;
+    const check = setInterval(() => {
+      attempts++;
+      try {
+        process.kill(pid, 0);
+        if (attempts > 10) {
+          clearInterval(check);
+          console.error("Gateway did not stop within 5s. Try: kill -9 " + pid);
+        }
+      } catch {
+        clearInterval(check);
+        console.log("Gateway stopped.");
+      }
+    }, 500);
+  });
+
+// --- restart ---
+program
+  .command("restart")
+  .description("Restart the gateway")
+  .option("-c, --config <path>", "Path to config file")
+  .option("-v, --verbose", "Enable debug logging")
+  .action(async (opts: { config?: string; verbose?: boolean }) => {
+    const dataDir = getDataDir(opts.config);
+    const pid = getRunningPid(dataDir);
+
+    if (pid) {
+      console.log(`Stopping gateway (PID ${pid})...`);
+      process.kill(pid, "SIGTERM");
+
+      // Wait for stop
+      await new Promise<void>((resolve) => {
+        let attempts = 0;
+        const check = setInterval(() => {
+          attempts++;
+          try {
+            process.kill(pid, 0);
+            if (attempts > 20) {
+              clearInterval(check);
+              console.error("Force killing...");
+              try { process.kill(pid, "SIGKILL"); } catch {}
+              setTimeout(() => resolve(), 500);
+            }
+          } catch {
+            clearInterval(check);
+            resolve();
+          }
+        }, 500);
+      });
+      console.log("Gateway stopped.");
+    }
+
+    // Start again in background
+    const logDir = getLogDir(dataDir);
+    const logFile = join(logDir, "gateway.log");
+
+    const args = [process.argv[1], "start", "--foreground"];
+    if (opts.config) args.push("--config", opts.config);
+    if (opts.verbose) args.push("--verbose");
+
+    const out = createWriteStream(logFile, { flags: "a" });
+    const child = spawn(process.argv[0], args, {
+      detached: true,
+      stdio: ["ignore", out, out],
+      env: { ...process.env },
+    });
+    child.unref();
+
+    await new Promise((r) => setTimeout(r, 1000));
+
+    try {
+      process.kill(child.pid!, 0);
+      console.log(`Gateway restarted (PID ${child.pid})`);
+      console.log(`Logs: ${logFile}`);
+    } catch {
+      console.error("Gateway failed to start. Check logs:");
+      console.error(`  tail -f ${logFile}`);
+      process.exit(1);
+    }
+
+    process.exit(0);
   });
 
 // --- status ---
@@ -98,8 +267,10 @@ program
   .command("status")
   .description("Check if gateway is running")
   .action(() => {
-    const dataDir = resolve(process.env.HOME ?? "~", ".claude-gateway");
+    const dataDir = getDataDir();
     const lockPath = join(dataDir, "gateway.lock");
+    const logFile = join(dataDir, "logs", "gateway.log");
+
     if (!existsSync(lockPath)) {
       console.log("Gateway is not running.");
       return;
@@ -108,9 +279,10 @@ program
       const lockData = JSON.parse(readFileSync(lockPath, "utf-8"));
       try {
         process.kill(lockData.pid, 0);
-        console.log(
-          `Gateway is running (PID ${lockData.pid}, started ${lockData.createdAt})`,
-        );
+        console.log(`Gateway is running (PID ${lockData.pid}, started ${lockData.createdAt})`);
+        if (existsSync(logFile)) {
+          console.log(`Logs: ${logFile}`);
+        }
       } catch {
         console.log("Gateway is not running (stale lock file).");
         unlinkSync(lockPath);
@@ -120,6 +292,29 @@ program
     }
   });
 
+// --- logs ---
+program
+  .command("logs")
+  .description("Tail the gateway logs")
+  .option("-n, --lines <n>", "Number of lines to show", "50")
+  .option("-f, --follow", "Follow log output", false)
+  .action((opts: { lines: string; follow: boolean }) => {
+    const dataDir = getDataDir();
+    const logFile = join(dataDir, "logs", "gateway.log");
+
+    if (!existsSync(logFile)) {
+      console.log("No log file found. Start the gateway first.");
+      return;
+    }
+
+    const args = ["-n", opts.lines];
+    if (opts.follow) args.push("-f");
+    args.push(logFile);
+
+    const tail = spawn("tail", args, { stdio: "inherit" });
+    tail.on("exit", (code) => process.exit(code ?? 0));
+  });
+
 // --- pairing ---
 const pairing = program.command("pairing").description("Manage pairing requests");
 
@@ -127,7 +322,7 @@ pairing
   .command("list")
   .description("List pending pairing requests")
   .action(() => {
-    const dataDir = resolve(process.env.HOME ?? "~", ".claude-gateway");
+    const dataDir = getDataDir();
     const pairingPath = join(dataDir, "credentials", "telegram-pairing.json");
     if (!existsSync(pairingPath)) {
       console.log("No pending pairing requests.");
@@ -156,7 +351,7 @@ pairing
   .argument("<code>", "Pairing code to approve")
   .option("--notify", "Send approval notification to user")
   .action((code: string) => {
-    const dataDir = resolve(process.env.HOME ?? "~", ".claude-gateway");
+    const dataDir = getDataDir();
     const pairingPath = join(dataDir, "credentials", "telegram-pairing.json");
     const allowPath = join(dataDir, "credentials", "telegram-allowFrom.json");
     const pm = new PairingManager(pairingPath);
@@ -169,9 +364,7 @@ pairing
     if (existsSync(allowPath)) {
       try {
         allowFrom = JSON.parse(readFileSync(allowPath, "utf-8")).allowFrom ?? [];
-      } catch {
-        // ignore malformed file
-      }
+      } catch {}
     }
     if (!allowFrom.includes(result.senderId)) {
       allowFrom.push(result.senderId);
@@ -191,7 +384,7 @@ allow
   .description("List allowed users")
   .argument("[channel]", "Channel name", "telegram")
   .action((channel: string) => {
-    const dataDir = resolve(process.env.HOME ?? "~", ".claude-gateway");
+    const dataDir = getDataDir();
     const allowPath = join(dataDir, "credentials", `${channel}-allowFrom.json`);
     if (!existsSync(allowPath)) {
       console.log(`No allowlist for ${channel}.`);
@@ -213,15 +406,13 @@ allow
   .argument("<channel>", "Channel name")
   .argument("<id>", "User ID")
   .action((channel: string, id: string) => {
-    const dataDir = resolve(process.env.HOME ?? "~", ".claude-gateway");
+    const dataDir = getDataDir();
     const allowPath = join(dataDir, "credentials", `${channel}-allowFrom.json`);
     let allowFrom: string[] = [];
     if (existsSync(allowPath)) {
       try {
         allowFrom = JSON.parse(readFileSync(allowPath, "utf-8")).allowFrom ?? [];
-      } catch {
-        // ignore malformed file
-      }
+      } catch {}
     }
     if (allowFrom.includes(id)) {
       console.log(`User ${id} is already in ${channel} allowlist.`);
@@ -241,7 +432,7 @@ allow
   .argument("<channel>", "Channel name")
   .argument("<id>", "User ID")
   .action((channel: string, id: string) => {
-    const dataDir = resolve(process.env.HOME ?? "~", ".claude-gateway");
+    const dataDir = getDataDir();
     const allowPath = join(dataDir, "credentials", `${channel}-allowFrom.json`);
     if (!existsSync(allowPath)) {
       console.log(`No allowlist for ${channel}.`);
@@ -250,9 +441,7 @@ allow
     let allowFrom: string[] = [];
     try {
       allowFrom = JSON.parse(readFileSync(allowPath, "utf-8")).allowFrom ?? [];
-    } catch {
-      // ignore malformed file
-    }
+    } catch {}
     const filtered = allowFrom.filter((x: string) => x !== id);
     if (filtered.length === allowFrom.length) {
       console.log(`User ${id} not found in ${channel} allowlist.`);
