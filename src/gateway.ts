@@ -275,7 +275,7 @@ export class Gateway {
       `Pairing code: ${req.code}`,
       "",
       "Ask the bot owner to approve with:",
-      `  claude-gateway pairing approve ${req.code}`,
+      `  openclaude pairing approve ${req.code}`,
     ].join("\n");
     await this.telegram!.send({ chatId: msg.chatId, text });
   }

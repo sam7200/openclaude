@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "claude-gateway": "dist/index.js"
+    "openclaude": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",

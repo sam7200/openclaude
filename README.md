@@ -32,7 +32,7 @@ git clone https://github.com/happy-shine/openclaude.git
 cd openclaude
 npm install
 npm run build
-npm link        # makes `claude-gateway` available globally
+npm link        # makes `openclaude` available globally
 ```
 
 ## Quick Start
@@ -57,8 +57,8 @@ channels:
 **2. Start the gateway**
 
 ```bash
-claude-gateway start          # background daemon
-claude-gateway start -f       # foreground (for debugging)
+openclaude start          # background daemon
+openclaude start -f       # foreground (for debugging)
 ```
 
 **3. Pair your account**
@@ -66,8 +66,8 @@ claude-gateway start -f       # foreground (for debugging)
 Message your bot on Telegram. It will reply with a pairing code. Approve it:
 
 ```bash
-claude-gateway pairing list
-claude-gateway pairing approve <code>
+openclaude pairing list
+openclaude pairing approve <code>
 ```
 
 Done. Start chatting with Claude via Telegram.
@@ -112,27 +112,27 @@ channels:
 ## CLI Reference
 
 ```
-claude-gateway start [options]     Start the gateway
+openclaude start [options]     Start the gateway
   -f, --foreground                 Run in foreground
   -c, --config <path>              Config file path
   -v, --verbose                    Debug logging
 
-claude-gateway stop                Stop the running gateway
-claude-gateway restart             Restart the gateway
-claude-gateway status              Check if gateway is running
-claude-gateway logs [-f] [-n 50]   Tail gateway logs
+openclaude stop                Stop the running gateway
+openclaude restart             Restart the gateway
+openclaude status              Check if gateway is running
+openclaude logs [-f] [-n 50]   Tail gateway logs
 
-claude-gateway pairing list        List pending pairing requests
-claude-gateway pairing approve <code>  Approve a pairing code
+openclaude pairing list        List pending pairing requests
+openclaude pairing approve <code>  Approve a pairing code
 
-claude-gateway allow list [channel]    List allowed users
-claude-gateway allow add <channel> <id>    Add user to allowlist
-claude-gateway allow remove <channel> <id> Remove user from allowlist
+openclaude allow list [channel]    List allowed users
+openclaude allow add <channel> <id>    Add user to allowlist
+openclaude allow remove <channel> <id> Remove user from allowlist
 
-claude-gateway agent show          Show current SOUL.md
-claude-gateway agent edit          Edit SOUL.md in $EDITOR
-claude-gateway agent reset         Delete SOUL.md (reset personality)
-claude-gateway agent path          Print SOUL.md file path
+openclaude agent show          Show current SOUL.md
+openclaude agent edit          Edit SOUL.md in $EDITOR
+openclaude agent reset         Delete SOUL.md (reset personality)
+openclaude agent path          Print SOUL.md file path
 ```
 
 ## Telegram Commands
@@ -151,7 +151,7 @@ In groups, the bot responds when **@mentioned** or **replied to**.
 Customize your bot's personality by creating a `SOUL.md` file:
 
 ```bash
-claude-gateway agent edit
+openclaude agent edit
 ```
 
 Or let Claude edit it — tell your bot "from now on, speak like a pirate" and it will update its own SOUL.md.

@@ -20,7 +20,7 @@ import { resolve, join } from "node:path";
 const program = new Command();
 
 program
-  .name("claude-gateway")
+  .name("openclaude")
   .description("Gateway bridging chat platforms to Claude Code CLI")
   .version("0.1.0");
 
@@ -30,7 +30,7 @@ function getDataDir(configPath?: string): string {
     const config = loadConfig(configPath);
     return resolve(config.gateway.dataDir.replace(/^~/, process.env.HOME ?? ""));
   } catch {
-    return resolve(process.env.HOME ?? "~", ".claude-gateway");
+    return resolve(process.env.HOME ?? "~", ".openclaude");
   }
 }
 
@@ -69,7 +69,7 @@ program
     // Check if already running
     const existingPid = getRunningPid(dataDir);
     if (existingPid) {
-      console.error(`Gateway already running (PID ${existingPid}). Use 'claude-gateway restart' to restart.`);
+      console.error(`Gateway already running (PID ${existingPid}). Use 'openclaude restart' to restart.`);
       process.exit(1);
     }
 
@@ -472,7 +472,7 @@ agent
     const soulPath = join(dataDir, "agents", botId, "SOUL.md");
     if (!existsSync(soulPath)) {
       console.log(`No SOUL.md found for bot ${botId}.`);
-      console.log(`Create one with: claude-gateway agent edit`);
+      console.log(`Create one with: openclaude agent edit`);
       return;
     }
     console.log(`SOUL.md for bot ${botId} (${soulPath}):\n`);
