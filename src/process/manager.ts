@@ -51,7 +51,8 @@ export class ProcessManager {
     });
 
     proc.stderr?.on("data", (data: Buffer) => {
-      this.log.debug({ sessionId: session.sessionId }, `stderr: ${data.toString().trim()}`);
+      const text = data.toString().trim();
+      if (text) this.log.warn({ sessionId: session.sessionId }, `claude stderr: ${text}`);
     });
 
     this.processes.set(session.sessionId, cp);
@@ -61,7 +62,7 @@ export class ProcessManager {
   }
 
   async *sendMessage(session: Session, text: string): AsyncGenerator<StreamEvent> {
-    const cp = this.acquire(session);
+    let cp = this.acquire(session);
     cp.busy = true;
     cp.lastActiveAt = Date.now();
     this.clearIdleTimer(session.sessionId);
@@ -69,7 +70,30 @@ export class ProcessManager {
     sendUserMessage(cp.process, text);
 
     try {
-      yield* readUntilResult(cp.process);
+      let gotEvents = false;
+      for await (const event of readUntilResult(cp.process)) {
+        gotEvents = true;
+        yield event;
+      }
+
+      // If process exited without producing any events and had a claudeSessionId,
+      // the resume likely failed. Retry without resume (fresh session).
+      if (!gotEvents && session.claudeSessionId) {
+        this.log.warn({ sessionId: session.sessionId }, "Resume failed, retrying as new session");
+        const savedClaudeId = session.claudeSessionId;
+        session.claudeSessionId = undefined;
+        this.processes.delete(session.sessionId);
+
+        cp = this.acquire(session);
+        cp.busy = true;
+        this.clearIdleTimer(session.sessionId);
+        sendUserMessage(cp.process, text);
+
+        yield* readUntilResult(cp.process);
+
+        // Restore claudeSessionId reference so caller can update it from init event
+        session.claudeSessionId = savedClaudeId;
+      }
     } finally {
       cp.busy = false;
       cp.lastActiveAt = Date.now();

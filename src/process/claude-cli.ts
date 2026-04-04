@@ -24,7 +24,11 @@ export function buildSpawnArgs(config: SpawnConfig): { cmd: string; args: string
 
 export function spawnClaude(config: SpawnConfig): ChildProcess {
   const { cmd, args } = buildSpawnArgs(config);
-  return spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env } });
+  return spawn(cmd, args, {
+    stdio: ["pipe", "pipe", "pipe"],
+    cwd: process.env.HOME ?? process.cwd(),
+    env: { ...process.env },
+  });
 }
 
 export function sendUserMessage(proc: ChildProcess, text: string): void {
