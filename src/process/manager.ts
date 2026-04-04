@@ -8,6 +8,7 @@ export interface ProcessManagerConfig {
   idleTimeoutMs: number;
   maxProcesses: number;
   extraArgs: string[];
+  workspaceDir: string;
 }
 
 export class ProcessManager {
@@ -35,7 +36,7 @@ export class ProcessManager {
       binary: this.config.binary,
       extraArgs: this.config.extraArgs,
       claudeSessionId: session.claudeSessionId,
-    });
+    }, this.config.workspaceDir);
 
     const cp: ClaudeProcess = {
       sessionId: session.sessionId,

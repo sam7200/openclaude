@@ -22,11 +22,11 @@ export function buildSpawnArgs(config: SpawnConfig): { cmd: string; args: string
   return { cmd: config.binary, args };
 }
 
-export function spawnClaude(config: SpawnConfig): ChildProcess {
+export function spawnClaude(config: SpawnConfig, cwd: string): ChildProcess {
   const { cmd, args } = buildSpawnArgs(config);
   return spawn(cmd, args, {
     stdio: ["pipe", "pipe", "pipe"],
-    cwd: process.env.HOME ?? process.cwd(),
+    cwd,
     env: { ...process.env },
   });
 }

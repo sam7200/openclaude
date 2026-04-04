@@ -112,28 +112,31 @@ program
     const config = loadConfig(opts.config);
     if (opts.verbose) config.gateway.logLevel = "debug";
 
-    // In foreground, log to both file and console
     const logDir = getLogDir(dataDir);
     const logFile = join(logDir, "gateway.log");
+    const isTTY = process.stdout.isTTY;
+
+    const targets: pino.TransportTargetOptions[] = [
+      // Always write JSON to file
+      {
+        target: "pino/file",
+        options: { destination: logFile, mkdir: true },
+        level: config.gateway.logLevel,
+      },
+    ];
+
+    // Only add pretty console output if running in a real terminal
+    if (isTTY) {
+      targets.push({
+        target: "pino-pretty",
+        options: { translateTime: "HH:MM:ss" },
+        level: config.gateway.logLevel,
+      });
+    }
 
     const log = pino({
       level: config.gateway.logLevel,
-      transport: {
-        targets: [
-          // Console (pretty)
-          {
-            target: "pino-pretty",
-            options: { translateTime: "HH:MM:ss" },
-            level: config.gateway.logLevel,
-          },
-          // File (JSON)
-          {
-            target: "pino/file",
-            options: { destination: logFile, mkdir: true },
-            level: config.gateway.logLevel,
-          },
-        ],
-      },
+      transport: { targets },
     });
 
     const lockPath = join(resolve(dataDir), "gateway.lock");

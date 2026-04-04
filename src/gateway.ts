@@ -37,12 +37,17 @@ export class Gateway {
       extraArgs.push("--model", config.claude.model);
     }
 
+    // Ensure workspace directory exists
+    const workspaceDir = join(this.dataDir, "workspace");
+    mkdirSync(workspaceDir, { recursive: true });
+
     this.processManager = new ProcessManager(
       {
         binary: config.claude.binary,
         idleTimeoutMs: config.claude.idleTimeoutMs,
         maxProcesses: config.claude.maxProcesses,
         extraArgs,
+        workspaceDir,
       },
       log,
     );
