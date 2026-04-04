@@ -22,6 +22,7 @@ const gatewaySchema = z.object({
 
 const claudeSchema = z.object({
   binary: z.string().default("claude"),
+  model: z.string().optional(),
   idleTimeoutMs: z.number().int().positive().default(600000),
   maxProcesses: z.number().int().positive().default(10),
   extraArgs: z.array(z.string()).default([]),

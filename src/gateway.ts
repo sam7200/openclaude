@@ -31,12 +31,18 @@ export class Gateway {
     const sessionStore = new SessionStore(join(this.dataDir, "sessions"));
     this.sessionManager = new SessionManager(sessionStore);
 
+    // Build extraArgs with model if configured
+    const extraArgs = [...config.claude.extraArgs];
+    if (config.claude.model) {
+      extraArgs.push("--model", config.claude.model);
+    }
+
     this.processManager = new ProcessManager(
       {
         binary: config.claude.binary,
         idleTimeoutMs: config.claude.idleTimeoutMs,
         maxProcesses: config.claude.maxProcesses,
-        extraArgs: config.claude.extraArgs,
+        extraArgs,
       },
       log,
     );

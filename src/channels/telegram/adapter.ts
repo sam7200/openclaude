@@ -1,4 +1,4 @@
-import type { Bot } from "grammy";
+import { Bot } from "grammy";
 import type { Logger } from "pino";
 import type { ChannelAdapter, OutboundMessage, MessageHandler, CommandHandler } from "../types.js";
 import { createBot } from "./bot.js";
@@ -9,10 +9,13 @@ export class TelegramAdapter implements ChannelAdapter {
   readonly type = "telegram";
   private bot: Bot;
   private log: Logger;
+  private token: string;
   private messageHandler?: MessageHandler;
   private commandHandlers = new Map<string, CommandHandler>();
+  private stopped = false;
 
   constructor(token: string, log: Logger) {
+    this.token = token;
     this.log = log.child({ module: "telegram" });
     this.bot = createBot(token, this.log);
   }
@@ -27,17 +30,43 @@ export class TelegramAdapter implements ChannelAdapter {
 
   async start(): Promise<void> {
     registerHandlers(this.bot, this.messageHandler, this.commandHandlers, this.log);
+
+    // Register commands with Telegram so they show in the menu
+    await this.bot.api.setMyCommands([
+      { command: "new", description: "Start a new session" },
+      { command: "switch", description: "Switch to a session (e.g. /switch 2)" },
+      { command: "sessions", description: "List all sessions" },
+      { command: "help", description: "Show help" },
+    ]);
+
+    this.startPollingWithRetry();
+  }
+
+  private startPollingWithRetry(): void {
+    if (this.stopped) return;
+
     this.bot.start({
       drop_pending_updates: true,
       onStart: (info) => {
         this.log.info({ username: info.username }, "Telegram bot started polling");
       },
     }).catch((err) => {
-      this.log.error({ error: err instanceof Error ? err.message : String(err) }, "Telegram polling crashed");
+      if (this.stopped) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error({ error: msg }, "Telegram polling crashed, restarting in 5s...");
+
+      setTimeout(() => {
+        if (this.stopped) return;
+        this.log.info("Recreating bot and restarting polling...");
+        this.bot = createBot(this.token, this.log);
+        registerHandlers(this.bot, this.messageHandler, this.commandHandlers, this.log);
+        this.startPollingWithRetry();
+      }, 5000);
     });
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     this.log.info("Stopping Telegram bot");
     await this.bot.stop();
   }

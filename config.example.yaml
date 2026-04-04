@@ -9,6 +9,7 @@ gateway:
 
 claude:
   binary: "claude"
+  model: "sonnet"           # Model: sonnet, opus, haiku, or full model ID
   idleTimeoutMs: 600000    # 10 minutes idle timeout for subprocesses
   maxProcesses: 10
   extraArgs: []

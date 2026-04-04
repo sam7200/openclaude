@@ -7,6 +7,7 @@ export interface GatewayConfig {
   };
   claude: {
     binary: string;
+    model?: string;
     idleTimeoutMs: number;
     maxProcesses: number;
     extraArgs: string[];
