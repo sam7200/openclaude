@@ -1,0 +1,66 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { SessionManager } from "../manager.js";
+
+describe("SessionManager", () => {
+  let mgr: SessionManager;
+
+  beforeEach(() => {
+    mgr = new SessionManager();
+  });
+
+  it("auto-creates first session on resolve", () => {
+    const s = mgr.resolve("chat1", "telegram");
+    expect(s.chatId).toBe("chat1");
+    expect(s.isActive).toBe(true);
+    expect(s.channelType).toBe("telegram");
+  });
+
+  it("returns same active session on repeated resolve", () => {
+    const s1 = mgr.resolve("chat1", "telegram");
+    const s2 = mgr.resolve("chat1", "telegram");
+    expect(s1.sessionId).toBe(s2.sessionId);
+  });
+
+  it("creates new session and deactivates old", () => {
+    const s1 = mgr.resolve("chat1", "telegram");
+    const s2 = mgr.createNew("chat1");
+    expect(s2.isActive).toBe(true);
+    expect(s2.sessionId).not.toBe(s1.sessionId);
+    const all = mgr.list("chat1");
+    const old = all.find((s) => s.sessionId === s1.sessionId);
+    expect(old?.isActive).toBe(false);
+  });
+
+  it("switches between sessions", () => {
+    mgr.resolve("chat1", "telegram");
+    mgr.createNew("chat1");
+    mgr.createNew("chat1");
+    const switched = mgr.switchTo("chat1", 1);
+    expect(switched).not.toBeNull();
+    expect(switched!.isActive).toBe(true);
+    const all = mgr.list("chat1");
+    expect(all.filter((s) => s.isActive)).toHaveLength(1);
+  });
+
+  it("returns null for invalid switch index", () => {
+    mgr.resolve("chat1", "telegram");
+    expect(mgr.switchTo("chat1", 99)).toBeNull();
+  });
+
+  it("lists sessions in creation order", () => {
+    mgr.resolve("chat1", "telegram");
+    mgr.createNew("chat1");
+    mgr.createNew("chat1");
+    const all = mgr.list("chat1");
+    expect(all).toHaveLength(3);
+    expect(all[0].createdAt).toBeLessThanOrEqual(all[1].createdAt);
+  });
+
+  it("updates session fields", () => {
+    const s = mgr.resolve("chat1", "telegram");
+    mgr.update(s.sessionId, { title: "My chat", claudeSessionId: "claude-123" });
+    const updated = mgr.resolve("chat1", "telegram");
+    expect(updated.title).toBe("My chat");
+    expect(updated.claudeSessionId).toBe("claude-123");
+  });
+});
