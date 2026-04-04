@@ -56,8 +56,10 @@ function getRunningPid(dataDir: string): number | null {
   }
 }
 
-// --- start ---
-program
+// --- gateway ---
+const gateway = program.command("gateway").description("Manage the gateway daemon");
+
+gateway
   .command("start")
   .description("Start the gateway")
   .option("-c, --config <path>", "Path to config file")
@@ -69,7 +71,7 @@ program
     // Check if already running
     const existingPid = getRunningPid(dataDir);
     if (existingPid) {
-      console.error(`Gateway already running (PID ${existingPid}). Use 'openclaude restart' to restart.`);
+      console.error(`Gateway already running (PID ${existingPid}). Use 'openclaude gateway restart' to restart.`);
       process.exit(1);
     }
 
@@ -78,7 +80,7 @@ program
       const logDir = getLogDir(dataDir);
       const logFile = join(logDir, "gateway.log");
 
-      const args = [process.argv[1], "start", "--foreground"];
+      const args = [process.argv[1], "gateway", "start", "--foreground"];
       if (opts.config) args.push("--config", opts.config);
       if (opts.verbose) args.push("--verbose");
 
@@ -168,8 +170,7 @@ program
     }
   });
 
-// --- stop ---
-program
+gateway
   .command("stop")
   .description("Stop the running gateway")
   .action(() => {
@@ -199,8 +200,7 @@ program
     }, 500);
   });
 
-// --- restart ---
-program
+gateway
   .command("restart")
   .description("Restart the gateway")
   .option("-c, --config <path>", "Path to config file")
@@ -267,8 +267,7 @@ program
     process.exit(0);
   });
 
-// --- status ---
-program
+gateway
   .command("status")
   .description("Check if gateway is running")
   .action(() => {
@@ -297,8 +296,7 @@ program
     }
   });
 
-// --- logs ---
-program
+gateway
   .command("logs")
   .description("Tail the gateway logs")
   .option("-n, --lines <n>", "Number of lines to show", "50")

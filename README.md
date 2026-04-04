@@ -57,8 +57,8 @@ channels:
 **2. Start the gateway**
 
 ```bash
-openclaude start          # background daemon
-openclaude start -f       # foreground (for debugging)
+openclaude gateway start          # background daemon
+openclaude gateway start -f       # foreground (for debugging)
 ```
 
 **3. Pair your account**
@@ -112,27 +112,26 @@ channels:
 ## CLI Reference
 
 ```
-openclaude start [options]     Start the gateway
-  -f, --foreground                 Run in foreground
-  -c, --config <path>              Config file path
-  -v, --verbose                    Debug logging
+openclaude gateway start [options]  Start the gateway
+  -f, --foreground                    Run in foreground
+  -c, --config <path>                 Config file path
+  -v, --verbose                       Debug logging
+openclaude gateway stop             Stop the running gateway
+openclaude gateway restart          Restart the gateway
+openclaude gateway status           Check if gateway is running
+openclaude gateway logs [-f] [-n 50] Tail gateway logs
 
-openclaude stop                Stop the running gateway
-openclaude restart             Restart the gateway
-openclaude status              Check if gateway is running
-openclaude logs [-f] [-n 50]   Tail gateway logs
+openclaude pairing list             List pending pairing requests
+openclaude pairing approve <code>   Approve a pairing code
 
-openclaude pairing list        List pending pairing requests
-openclaude pairing approve <code>  Approve a pairing code
+openclaude allow list [channel]     List allowed users
+openclaude allow add <ch> <id>      Add user to allowlist
+openclaude allow remove <ch> <id>   Remove user from allowlist
 
-openclaude allow list [channel]    List allowed users
-openclaude allow add <channel> <id>    Add user to allowlist
-openclaude allow remove <channel> <id> Remove user from allowlist
-
-openclaude agent show          Show current SOUL.md
-openclaude agent edit          Edit SOUL.md in $EDITOR
-openclaude agent reset         Delete SOUL.md (reset personality)
-openclaude agent path          Print SOUL.md file path
+openclaude agent show               Show current SOUL.md
+openclaude agent edit               Edit SOUL.md in $EDITOR
+openclaude agent reset              Delete SOUL.md (reset personality)
+openclaude agent path               Print SOUL.md file path
 ```
 
 ## Telegram Commands
