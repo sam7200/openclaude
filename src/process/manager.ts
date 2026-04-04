@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import type { ClaudeProcess, StreamEvent } from "./types.js";
 import type { Session } from "../sessions/types.js";
 import { spawnClaude, sendUserMessage, readUntilResult } from "./claude-cli.js";
+import { getTelegramFileSkill } from "../skills/telegram-file.js";
 
 export interface ProcessManagerConfig {
   binary: string;
@@ -12,6 +13,7 @@ export interface ProcessManagerConfig {
   extraArgs: string[];
   workspaceDir: string;
   botId: string;
+  apiPort: number;
 }
 
 export class ProcessManager {
@@ -44,9 +46,16 @@ export class ProcessManager {
     );
     mkdirSync(sessionDir, { recursive: true });
 
+    // Inject the Telegram file skill via --append-system-prompt
+    const skill = getTelegramFileSkill(this.config.apiPort, session.chatId);
+    const extraArgs = [
+      ...this.config.extraArgs,
+      "--append-system-prompt", skill,
+    ];
+
     const proc = spawnClaude({
       binary: this.config.binary,
-      extraArgs: this.config.extraArgs,
+      extraArgs,
       claudeSessionId: session.claudeSessionId,
     }, sessionDir);
 

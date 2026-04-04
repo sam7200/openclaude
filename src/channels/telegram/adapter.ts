@@ -4,8 +4,9 @@ import type { ChannelAdapter, OutboundMessage, MessageHandler, CommandHandler } 
 import { createBot } from "./bot.js";
 import { registerHandlers } from "./handlers.js";
 import { splitMessage } from "./formatter.js";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, createReadStream } from "node:fs";
 import { join } from "node:path";
+import { InputFile } from "grammy";
 
 export class TelegramAdapter implements ChannelAdapter {
   readonly type = "telegram";
@@ -98,6 +99,20 @@ export class TelegramAdapter implements ChannelAdapter {
 
   async sendTyping(chatId: string): Promise<void> {
     await this.bot.api.sendChatAction(Number(chatId), "typing");
+  }
+
+  /** Send a photo from local path */
+  async sendPhoto(chatId: string, filePath: string, caption?: string): Promise<void> {
+    await this.bot.api.sendPhoto(Number(chatId), new InputFile(filePath), {
+      caption,
+    });
+  }
+
+  /** Send a document from local path */
+  async sendDocument(chatId: string, filePath: string, caption?: string): Promise<void> {
+    await this.bot.api.sendDocument(Number(chatId), new InputFile(filePath), {
+      caption,
+    });
   }
 
   /** Download a Telegram file to local disk, return local path */

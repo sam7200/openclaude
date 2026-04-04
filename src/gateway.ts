@@ -10,6 +10,7 @@ import { checkAccess } from "./auth/access.js";
 import { PairingManager } from "./auth/pairing.js";
 import { resolveDataDir } from "./config/loader.js";
 import { splitMessage } from "./channels/telegram/formatter.js";
+import { ApiServer } from "./api/server.js";
 import { join } from "node:path";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
 
@@ -19,6 +20,7 @@ export class Gateway {
   private sessionManager: SessionManager;
   private processManager: ProcessManager;
   private pairingManager: PairingManager;
+  private apiServer?: ApiServer;
   private telegram?: TelegramAdapter;
   private allowFrom: Set<string>;
   private dataDir: string;
@@ -51,6 +53,7 @@ export class Gateway {
         extraArgs,
         workspaceDir,
         botId,
+        apiPort: config.gateway.port,
       },
       log,
     );
@@ -97,6 +100,15 @@ export class Gateway {
       this.telegram.onMessage((msg) => this.handleMessage(msg));
       await this.telegram.start();
       this.log.info("Telegram adapter started");
+
+      // Start API server for file sending
+      this.apiServer = new ApiServer({
+        port: this.config.gateway.port,
+        telegram: this.telegram,
+        dataDir: this.dataDir,
+        log: this.log,
+      });
+      await this.apiServer.start();
     }
 
     this.log.info("Gateway started");
@@ -104,6 +116,7 @@ export class Gateway {
 
   async stop(): Promise<void> {
     this.log.info("Stopping gateway...");
+    await this.apiServer?.stop();
     await this.telegram?.stop();
     await this.processManager.shutdown();
     await this.sessionManager.flushAll();
