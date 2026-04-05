@@ -25,6 +25,8 @@ export class Gateway {
   private telegram?: TelegramAdapter;
   private allowFrom: Set<string>;
   private dataDir: string;
+  /** Track the last message with inline buttons per chat, so we can remove stale buttons */
+  private lastButtonMsg = new Map<string, string>();
 
   constructor(config: GatewayConfig, log: Logger) {
     this.config = config;
@@ -165,6 +167,13 @@ export class Gateway {
 
     await this.telegram!.sendTyping(msg.chatId);
 
+    // Remove stale inline buttons from previous message
+    const prevBtnMsg = this.lastButtonMsg.get(msg.chatId);
+    if (prevBtnMsg) {
+      this.lastButtonMsg.delete(msg.chatId);
+      this.telegram!.removeButtons(msg.chatId, prevBtnMsg).catch(() => {});
+    }
+
     // Build message with metadata (sender, time, reply context)
     let messageText = formatMessageWithMeta(msg);
     if (msg.attachments && msg.attachments.length > 0) {
@@ -255,11 +264,14 @@ export class Gateway {
             if (buttons.length > 0) {
               // Send/edit with inline keyboard buttons
               const existingMsgId = progress.getMessageId();
+              let btnMsgId: string;
               if (existingMsgId) {
                 await this.telegram!.editMessage(msg.chatId, existingMsgId, cleanText, buttons);
+                btnMsgId = existingMsgId;
               } else {
-                await this.telegram!.sendWithButtons(msg.chatId, cleanText, buttons, msg.messageId);
+                btnMsgId = await this.telegram!.sendWithButtons(msg.chatId, cleanText, buttons, msg.messageId);
               }
+              this.lastButtonMsg.set(msg.chatId, btnMsgId);
             } else {
               await progress.sendOrEdit(cleanText);
             }

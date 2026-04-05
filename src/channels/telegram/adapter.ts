@@ -119,6 +119,17 @@ export class TelegramAdapter implements ChannelAdapter {
     });
   }
 
+  /** Remove inline keyboard from a message */
+  async removeButtons(chatId: string, messageId: string): Promise<void> {
+    try {
+      await this.bot.api.editMessageReplyMarkup(Number(chatId), Number(messageId), {
+        reply_markup: { inline_keyboard: [] },
+      });
+    } catch {
+      // ignore — message may have been deleted or already has no buttons
+    }
+  }
+
   /** Send a message with inline keyboard buttons */
   async sendWithButtons(chatId: string, text: string, buttons: string[], replyToMessageId?: string): Promise<string> {
     const truncated = text.slice(0, 4096);
