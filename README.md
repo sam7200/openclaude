@@ -185,6 +185,10 @@ Changes take effect on the next `/new` session.
     └── SOUL.md
 ```
 
+## Community
+
+This project is shared with the [LINUX DO](https://linux.do/) community.
+
 ## License
 
 MIT
