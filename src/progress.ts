@@ -63,6 +63,8 @@ export class ProgressTracker {
   private flushing = false;
   private buffer = "";
   private flushTimer?: ReturnType<typeof setInterval>;
+  private done = false;
+  private pendingFlush: Promise<void> = Promise.resolve();
 
   constructor(telegram: TelegramAdapter, chatId: string, replyToMessageId?: string) {
     this.telegram = telegram;
@@ -73,7 +75,7 @@ export class ProgressTracker {
   /** Start periodic auto-flush (for updates during long tool execution) */
   start(): void {
     this.flushTimer = setInterval(() => {
-      this.flush().catch(() => {});
+      this.pendingFlush = this.flush().catch(() => {});
     }, FLUSH_INTERVAL);
   }
 
@@ -83,6 +85,16 @@ export class ProgressTracker {
       clearInterval(this.flushTimer);
       this.flushTimer = undefined;
     }
+  }
+
+  /** Mark tracking as complete — stops timer, awaits any in-flight flush */
+  async finish(): Promise<void> {
+    this.done = true;
+    this.stop();
+    this.finishCurrent();
+    // Wait for any in-flight timer-fired flush to complete,
+    // so the caller's subsequent sendOrEdit is guaranteed to be last.
+    await this.pendingFlush;
   }
 
   /** Mark thinking phase started */
@@ -118,7 +130,7 @@ export class ProgressTracker {
 
   /** Periodic flush — debounced + locked to prevent concurrent edits */
   async flush(): Promise<void> {
-    if (this.flushing) return;
+    if (this.done || this.flushing) return;
     const now = Date.now();
     if (now - this.lastFlush < FLUSH_INTERVAL) return;
 

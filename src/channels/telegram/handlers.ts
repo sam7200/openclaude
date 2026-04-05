@@ -185,6 +185,14 @@ function contextToInbound(ctx: Context): InboundMessage | null {
   const senderId = String(msg.from?.id ?? "unknown");
   const senderName = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ") || "Unknown";
 
+  const reply = msg.reply_to_message;
+  let replyText: string | undefined;
+  let replySenderName: string | undefined;
+  if (reply) {
+    replyText = reply.text ?? reply.caption ?? undefined;
+    replySenderName = [reply.from?.first_name, reply.from?.last_name].filter(Boolean).join(" ") || undefined;
+  }
+
   return {
     channelType: "telegram",
     chatId,
@@ -193,8 +201,11 @@ function contextToInbound(ctx: Context): InboundMessage | null {
     messageId: String(msg.message_id),
     text: msg.text ?? "",
     isGroup: msg.chat.type === "group" || msg.chat.type === "supergroup",
+    timestamp: msg.date,
     threadId: msg.message_thread_id ? String(msg.message_thread_id) : undefined,
-    replyToMessageId: msg.reply_to_message?.message_id ? String(msg.reply_to_message.message_id) : undefined,
+    replyToMessageId: reply?.message_id ? String(reply.message_id) : undefined,
+    replyText,
+    replySenderName,
     raw: msg,
   };
 }

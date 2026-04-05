@@ -6,8 +6,11 @@ export interface InboundMessage {
   messageId: string;
   text: string;
   isGroup: boolean;
+  timestamp: number;
   threadId?: string;
   replyToMessageId?: string;
+  replyText?: string;
+  replySenderName?: string;
   attachments?: Attachment[];
   raw: unknown;
 }

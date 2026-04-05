@@ -165,9 +165,8 @@ export class Gateway {
 
     await this.telegram!.sendTyping(msg.chatId);
 
-    // Download attachments into the session's workspace.
-    // We need to pre-acquire to know the workspace dir, then download before sending the message.
-    let messageText = msg.text;
+    // Build message with metadata (sender, time, reply context)
+    let messageText = formatMessageWithMeta(msg);
     if (msg.attachments && msg.attachments.length > 0) {
       // Trigger acquire to create the workspace dir
       this.processManager.acquire(session);
@@ -238,16 +237,23 @@ export class Gateway {
           }
         }
 
-        // --- Trigger flush on each event (debounced internally) ---
-        await progress.flush();
-
         // --- Result: finalize ---
         if (event.type === "result") {
+          // Stop timer + await any in-flight flush BEFORE sending final message.
+          // This prevents the timer-fired flush from overwriting the response.
+          await progress.finish();
+
+          // Prefer buffer (accumulated text from all assistant events).
+          // Fall back to result.result (Claude CLI's final output) if buffer is empty.
           const buf = progress.getBuffer();
-          if (buf.length > 0) {
-            await progress.sendOrEdit(buf);
-            if (buf.length > 4096) {
-              for (const chunk of splitMessage(buf.slice(4096))) {
+          const finalText = buf.length > 0
+            ? buf
+            : (typeof event.result === "string" && event.result) || "";
+
+          if (finalText.length > 0) {
+            await progress.sendOrEdit(finalText);
+            if (finalText.length > 4096) {
+              for (const chunk of splitMessage(finalText.slice(4096))) {
                 await this.telegram!.send({ chatId: msg.chatId, text: chunk });
               }
             }
@@ -256,6 +262,9 @@ export class Gateway {
           }
           break;
         }
+
+        // --- Trigger flush on each event (debounced internally) ---
+        await progress.flush();
       }
     } finally {
       progress.stop();
@@ -373,4 +382,32 @@ function formatAge(ms: number): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+/** Format message with sender name, timestamp, and reply context */
+function formatMessageWithMeta(msg: InboundMessage): string {
+  const dt = new Date(msg.timestamp * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const ts = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+
+  const lines: string[] = [];
+  lines.push(`[${ts}] ${msg.senderName}:`);
+
+  if (msg.replyText) {
+    const quoteName = msg.replySenderName ?? "Unknown";
+    const quoteText = msg.replyText.length > 200
+      ? msg.replyText.slice(0, 200) + "…"
+      : msg.replyText;
+    const quoteLines = quoteText.split("\n");
+    lines.push(`> ${quoteName}: ${quoteLines[0]}`);
+    for (let i = 1; i < quoteLines.length; i++) {
+      lines.push(`> ${quoteLines[i]}`);
+    }
+  }
+
+  if (msg.text) {
+    lines.push(msg.text);
+  }
+
+  return lines.join("\n");
 }
