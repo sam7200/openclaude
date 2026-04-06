@@ -214,12 +214,46 @@ export class ProcessManager {
     return this.processes.get(sessionId)?.workspaceDir;
   }
 
-  /** Send a control_request to a running session's Claude process */
+  /** Send a control_request to a running session's Claude process (fire-and-forget) */
   sendControl(sessionId: string, request: Record<string, unknown>): boolean {
     const cp = this.processes.get(sessionId);
     if (!cp || cp.process.killed) return false;
     sendControlRequest(cp.process, request);
     return true;
+  }
+
+  /** Send a control_request and wait for the response from stdout */
+  async sendControlAndWait(sessionId: string, request: Record<string, unknown>, timeoutMs = 5000): Promise<Record<string, unknown> | null> {
+    const cp = this.processes.get(sessionId);
+    if (!cp || cp.process.killed) return null;
+
+    const requestId = `gw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const msg = JSON.stringify({ type: "control_request", request_id: requestId, request });
+    cp.process.stdin!.write(msg + "\n");
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { cleanup(); resolve(null); }, timeoutMs);
+
+      const onData = (chunk: Buffer) => {
+        for (const line of chunk.toString().split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.type === "control_response" && parsed.response?.request_id === requestId) {
+              cleanup();
+              resolve(parsed.response as Record<string, unknown>);
+            }
+          } catch {}
+        }
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        cp.process.stdout?.off("data", onData);
+      };
+
+      cp.process.stdout?.on("data", onData);
+    });
   }
 
   /** Check if a session has a running process */

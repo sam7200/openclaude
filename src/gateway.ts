@@ -256,9 +256,10 @@ export class Gateway {
 
         // --- Result: finalize ---
         if (event.type === "result") {
-          // Accumulate cost
-          if (typeof event.cost_usd === "number") {
-            this.chatCost.set(msg.chatId, (this.chatCost.get(msg.chatId) ?? 0) + event.cost_usd);
+          // Accumulate cost (field is total_cost_usd per Claude Code SDK schema)
+          const cost = event.total_cost_usd as number | undefined;
+          if (typeof cost === "number") {
+            this.chatCost.set(msg.chatId, (this.chatCost.get(msg.chatId) ?? 0) + cost);
           }
 
           // Stop timer + await any in-flight flush BEFORE sending final message.
@@ -480,13 +481,26 @@ export class Gateway {
     if (!access.allowed) return;
 
     const session = this.sessionManager.resolve(msg.chatId, msg.channelType);
-    const sent = this.processManager.sendControl(session.sessionId, { subtype: "get_context_usage" });
-    if (!sent) {
+    const resp = await this.processManager.sendControlAndWait(session.sessionId, { subtype: "get_context_usage" });
+    if (!resp) {
       await this.telegram!.send({ chatId: msg.chatId, text: "No active process." });
-    } else {
-      // Response comes via stdout as control_response — for now just confirm
-      await this.telegram!.send({ chatId: msg.chatId, text: "Context usage requested. Check logs for details." });
+      return;
     }
+
+    const r = (resp.response ?? resp) as Record<string, unknown>;
+    const lines: string[] = ["Context Usage:"];
+    if (r.total !== undefined && r.limit !== undefined) {
+      const pct = Math.round((Number(r.total) / Number(r.limit)) * 100);
+      lines.push(`${Number(r.total).toLocaleString()} / ${Number(r.limit).toLocaleString()} tokens (${pct}%)`);
+    }
+    if (r.breakdown && typeof r.breakdown === "object") {
+      for (const [k, v] of Object.entries(r.breakdown as Record<string, unknown>)) {
+        if (typeof v === "number" && v > 0) lines.push(`  ${k}: ${v.toLocaleString()}`);
+      }
+    }
+    // Fallback: dump the raw response if nothing parsed
+    if (lines.length === 1) lines.push(JSON.stringify(r, null, 2).slice(0, 3000));
+    await this.telegram!.send({ chatId: msg.chatId, text: lines.join("\n") });
   }
 
   private async handleSettings(msg: InboundMessage): Promise<void> {
@@ -494,12 +508,23 @@ export class Gateway {
     if (!access.allowed) return;
 
     const session = this.sessionManager.resolve(msg.chatId, msg.channelType);
-    const sent = this.processManager.sendControl(session.sessionId, { subtype: "get_settings" });
-    if (!sent) {
+    const resp = await this.processManager.sendControlAndWait(session.sessionId, { subtype: "get_settings" });
+    if (!resp) {
       await this.telegram!.send({ chatId: msg.chatId, text: "No active process." });
-    } else {
-      await this.telegram!.send({ chatId: msg.chatId, text: "Settings requested. Check logs for details." });
+      return;
     }
+
+    const r = (resp.response ?? resp) as Record<string, unknown>;
+    // Extract key settings for display
+    const effective = r.effective ?? r;
+    const lines: string[] = ["Settings:"];
+    const show = ["model", "effortLevel", "permissionMode", "thinkingBudget", "customInstructions"];
+    for (const key of show) {
+      const val = (effective as Record<string, unknown>)[key];
+      if (val !== undefined && val !== null) lines.push(`  ${key}: ${String(val).slice(0, 100)}`);
+    }
+    if (lines.length === 1) lines.push(JSON.stringify(r, null, 2).slice(0, 3000));
+    await this.telegram!.send({ chatId: msg.chatId, text: lines.join("\n") });
   }
 
   getPairingManager(): PairingManager {
