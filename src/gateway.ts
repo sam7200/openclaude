@@ -310,27 +310,32 @@ export class Gateway {
 
           if (finalText.length > 0) {
             const { text: cleanText, buttons } = extractButtons(finalText);
+
+            // Always send final reply as a NEW message so the user gets a notification.
+            // The progress message stays as-is (shows tool execution history).
+            const chunks = splitMessage(cleanText);
             if (buttons.length > 0) {
-              // Send/edit with inline keyboard buttons
-              const existingMsgId = progress.getMessageId();
-              let btnMsgId: string;
-              if (existingMsgId) {
-                await this.telegram!.editMessage(msg.chatId, existingMsgId, cleanText, buttons);
-                btnMsgId = existingMsgId;
-              } else {
-                btnMsgId = await this.telegram!.sendWithButtons(msg.chatId, cleanText, buttons, msg.messageId);
-              }
+              const btnMsgId = await this.telegram!.sendWithButtons(
+                msg.chatId, chunks[0], buttons, msg.messageId,
+              );
               this.lastButtonMsg.set(msg.chatId, btnMsgId);
-            } else {
-              await progress.sendOrEdit(cleanText);
-            }
-            if (cleanText.length > 4096) {
-              for (const chunk of splitMessage(cleanText.slice(4096))) {
+              for (const chunk of chunks.slice(1)) {
                 await this.telegram!.send({ chatId: msg.chatId, text: chunk });
+              }
+            } else {
+              for (let i = 0; i < chunks.length; i++) {
+                await this.telegram!.send({
+                  chatId: msg.chatId,
+                  text: chunks[i],
+                  ...(i === 0 ? { replyToMessageId: msg.messageId } : {}),
+                });
               }
             }
           } else if (event.is_error) {
-            await progress.sendOrEdit(`Error: ${event.result ?? "Unknown error"}`);
+            await this.telegram!.send({
+              chatId: msg.chatId,
+              text: `Error: ${event.result ?? "Unknown error"}`,
+            });
           }
           break;
         }
