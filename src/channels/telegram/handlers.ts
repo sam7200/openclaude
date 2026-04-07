@@ -11,6 +11,46 @@ const mediaGroupBuffers = new Map<string, {
 
 const MEDIA_GROUP_WAIT_MS = 500;
 
+/** Recent group message history for context (per chat) */
+export type GroupHistoryEntry = {
+  senderName: string;
+  text: string;
+  timestamp: number;
+  messageId: string;
+};
+
+const groupHistoryBuffers = new Map<string, GroupHistoryEntry[]>();
+const GROUP_HISTORY_MAX = 50;
+
+/** Record a group message into the history buffer (silent ingest) */
+function recordGroupHistory(chatId: string, entry: GroupHistoryEntry): void {
+  let buf = groupHistoryBuffers.get(chatId);
+  if (!buf) {
+    buf = [];
+    groupHistoryBuffers.set(chatId, buf);
+  }
+  buf.push(entry);
+  // Trim to max size
+  if (buf.length > GROUP_HISTORY_MAX) {
+    buf.splice(0, buf.length - GROUP_HISTORY_MAX);
+  }
+}
+
+/** Drain the group history buffer and return formatted context string */
+export function drainGroupHistory(chatId: string): string {
+  const buf = groupHistoryBuffers.get(chatId);
+  if (!buf || buf.length === 0) return "";
+  const lines = buf.map((e) => {
+    const dt = new Date(e.timestamp * 1000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const ts = `${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+    return `[${ts}] ${e.senderName}: ${e.text}`;
+  });
+  // Clear the buffer after draining
+  groupHistoryBuffers.delete(chatId);
+  return lines.join("\n");
+}
+
 export function registerHandlers(
   bot: Bot,
   messageHandler: MessageHandler | undefined,
@@ -18,17 +58,19 @@ export function registerHandlers(
   log: Logger,
 ): void {
   for (const [cmd, handler] of commandHandlers) {
-    bot.command(cmd, async (ctx) => {
+    bot.command(cmd, (ctx) => {
       const msg = contextToInbound(ctx);
       if (!msg) return;
       const text = ctx.message?.text ?? "";
       const spaceIdx = text.indexOf(" ");
       msg.text = spaceIdx > 0 ? text.slice(spaceIdx + 1).trim() : "";
-      await handler(msg);
+      handler(msg).catch((err: unknown) => {
+        log.error({ error: err instanceof Error ? err.message : String(err), cmd }, "Command handler failed");
+      });
     });
   }
 
-  bot.on("message:text", async (ctx) => {
+  bot.on("message:text", (ctx) => {
     if (ctx.message.text.startsWith("/")) return;
     if (!messageHandler) return;
     const msg = contextToInbound(ctx);
@@ -36,14 +78,25 @@ export function registerHandlers(
 
     if (msg.isGroup) {
       const result = checkGroupMention(ctx, msg, ctx.message.text);
-      if (!result) return;
+      if (!result) {
+        // Not targeted at bot — silently record for group context
+        recordGroupHistory(msg.chatId, {
+          senderName: msg.senderName,
+          text: ctx.message.text,
+          timestamp: msg.timestamp,
+          messageId: msg.messageId,
+        });
+        return;
+      }
       msg.text = result;
     }
 
-    await messageHandler(msg);
+    messageHandler(msg).catch((err: unknown) => {
+      log.error({ error: err instanceof Error ? err.message : String(err) }, "Message handler failed");
+    });
   });
 
-  bot.on("message:photo", async (ctx) => {
+  bot.on("message:photo", (ctx) => {
     if (!messageHandler) return;
     const msg = contextToInbound(ctx);
     if (!msg) return;
@@ -52,7 +105,15 @@ export function registerHandlers(
 
     if (msg.isGroup) {
       const result = checkGroupMention(ctx, msg, caption);
-      if (result === null) return;
+      if (result === null) {
+        recordGroupHistory(msg.chatId, {
+          senderName: msg.senderName,
+          text: caption ? `[Photo] ${caption}` : "[Photo]",
+          timestamp: msg.timestamp,
+          messageId: msg.messageId,
+        });
+        return;
+      }
       msg.text = result;
     } else {
       msg.text = caption;
@@ -67,7 +128,9 @@ export function registerHandlers(
       bufferMediaGroup(mediaGroupId, msg, [attachment], msg.text, messageHandler, log);
     } else {
       msg.attachments = [attachment];
-      await messageHandler(msg);
+      messageHandler(msg).catch((err: unknown) => {
+        log.error({ error: err instanceof Error ? err.message : String(err) }, "Photo handler failed");
+      });
     }
   });
 
@@ -107,10 +170,12 @@ export function registerHandlers(
       raw: ctx.callbackQuery,
     };
 
-    await messageHandler(msg);
+    messageHandler(msg).catch((err: unknown) => {
+      log.error({ error: err instanceof Error ? err.message : String(err) }, "Callback handler failed");
+    });
   });
 
-  bot.on("message:document", async (ctx) => {
+  bot.on("message:document", (ctx) => {
     if (!messageHandler) return;
     const msg = contextToInbound(ctx);
     if (!msg) return;
@@ -122,7 +187,18 @@ export function registerHandlers(
       // For media groups, allow through even without mention —
       // the caption (with @mention) is only on the first message
       const mediaGroupId = ctx.message.media_group_id;
-      if (result === null && !mediaGroupId) return;
+      if (result === null && !mediaGroupId) {
+        const fileName = ctx.message.document?.file_name;
+        recordGroupHistory(msg.chatId, {
+          senderName: msg.senderName,
+          text: caption
+            ? `[File: ${fileName ?? "document"}] ${caption}`
+            : `[File: ${fileName ?? "document"}]`,
+          timestamp: msg.timestamp,
+          messageId: msg.messageId,
+        });
+        return;
+      }
       msg.text = result ?? "";
     } else {
       msg.text = caption;
@@ -141,7 +217,9 @@ export function registerHandlers(
       bufferMediaGroup(mediaGroupId, msg, [attachment], msg.text, messageHandler, log);
     } else {
       msg.attachments = [attachment];
-      await messageHandler(msg);
+      messageHandler(msg).catch((err: unknown) => {
+        log.error({ error: err instanceof Error ? err.message : String(err) }, "Document handler failed");
+      });
     }
   });
 }
@@ -187,7 +265,7 @@ function bufferMediaGroup(
   const buffer = {
     messages: [{ msg, attachments }],
     text,
-    timer: setTimeout(async () => {
+    timer: setTimeout(() => {
       mediaGroupBuffers.delete(mediaGroupId);
       const buf = buffer;
 
@@ -209,7 +287,9 @@ function bufferMediaGroup(
         { mediaGroupId, fileCount: base.attachments.length },
         "Processing media group",
       );
-      await handler(base);
+      handler(base).catch((err: unknown) => {
+        log.error({ error: err instanceof Error ? err.message : String(err) }, "Media group handler failed");
+      });
     }, MEDIA_GROUP_WAIT_MS),
   };
 
@@ -227,9 +307,69 @@ function contextToInbound(ctx: Context): InboundMessage | null {
   const reply = msg.reply_to_message;
   let replyText: string | undefined;
   let replySenderName: string | undefined;
+  let replyIsQuote = false;
+  const replyAttachments: Attachment[] = [];
   if (reply) {
-    replyText = reply.text ?? reply.caption ?? undefined;
     replySenderName = [reply.from?.first_name, reply.from?.last_name].filter(Boolean).join(" ") || undefined;
+
+    // Prefer explicit quote text (user selected specific text) over full message
+    const quoteText = (msg as unknown as Record<string, unknown>).quote as { text?: string } | undefined;
+    if (quoteText?.text) {
+      replyText = quoteText.text;
+      replyIsQuote = true;
+    } else {
+      // Full reply message text/caption
+      replyText = reply.text ?? reply.caption ?? undefined;
+    }
+
+    // Extract media from reply message so gateway can download them
+    const r = reply as unknown as Record<string, unknown>;
+    if (r.photo) {
+      const photos = r.photo as Array<{ file_id: string }>;
+      const largest = photos[photos.length - 1];
+      if (largest) {
+        replyAttachments.push({ type: "photo", fileId: largest.file_id });
+      }
+      if (!replyText) replyText = "[Photo]";
+    }
+    if (r.document) {
+      const doc = r.document as { file_id: string; file_name?: string; mime_type?: string };
+      replyAttachments.push({
+        type: "document",
+        fileId: doc.file_id,
+        fileName: doc.file_name,
+        mimeType: doc.mime_type,
+      });
+      if (!replyText) replyText = doc.file_name ? `[File: ${doc.file_name}]` : "[Document]";
+    }
+    if (r.video) {
+      const vid = r.video as { file_id: string };
+      replyAttachments.push({ type: "video", fileId: vid.file_id });
+      if (!replyText) replyText = "[Video]";
+    }
+    if (r.voice) {
+      const voice = r.voice as { file_id: string; mime_type?: string };
+      replyAttachments.push({ type: "voice", fileId: voice.file_id, mimeType: voice.mime_type });
+      if (!replyText) replyText = "[Voice message]";
+    }
+    if (r.audio) {
+      const audio = r.audio as { file_id: string; file_name?: string; mime_type?: string };
+      replyAttachments.push({
+        type: "audio",
+        fileId: audio.file_id,
+        fileName: audio.file_name,
+        mimeType: audio.mime_type,
+      });
+      if (!replyText) replyText = "[Audio]";
+    }
+    if (!replyText) {
+      if (r.sticker) {
+        const sticker = r.sticker as { emoji?: string };
+        replyText = sticker.emoji ? `[Sticker ${sticker.emoji}]` : "[Sticker]";
+      } else if (r.animation) {
+        replyText = "[GIF]";
+      }
+    }
   }
 
   return {
@@ -245,6 +385,8 @@ function contextToInbound(ctx: Context): InboundMessage | null {
     replyToMessageId: reply?.message_id ? String(reply.message_id) : undefined,
     replyText,
     replySenderName,
+    replyIsQuote,
+    replyAttachments: replyAttachments.length > 0 ? replyAttachments : undefined,
     raw: msg,
   };
 }

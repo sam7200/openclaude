@@ -3,6 +3,7 @@ import type { GatewayConfig } from "./config/types.js";
 import type { InboundMessage } from "./channels/types.js";
 import type { StreamEvent } from "./process/types.js";
 import { TelegramAdapter } from "./channels/telegram/adapter.js";
+import { drainGroupHistory } from "./channels/telegram/handlers.js";
 import { SessionManager } from "./sessions/manager.js";
 import { SessionStore } from "./sessions/store.js";
 import { ProcessManager } from "./process/manager.js";
@@ -29,6 +30,8 @@ export class Gateway {
   private lastButtonMsg = new Map<string, string>();
   /** Accumulated cost per chat (USD) */
   private chatCost = new Map<string, number>();
+  /** Per-chat promise chain: serializes messages within a chat, parallel across chats */
+  private chatQueues = new Map<string, Promise<void>>();
 
   constructor(config: GatewayConfig, log: Logger) {
     this.config = config;
@@ -111,7 +114,7 @@ export class Gateway {
       this.telegram.onCommand("cost", (msg) => this.handleCost(msg));
       this.telegram.onCommand("context", (msg) => this.handleContext(msg));
       this.telegram.onCommand("settings", (msg) => this.handleSettings(msg));
-      this.telegram.onMessage((msg) => this.handleMessage(msg));
+      this.telegram.onMessage((msg) => this.enqueueChat(msg));
       await this.telegram.start();
       this.log.info("Telegram adapter started");
 
@@ -153,6 +156,24 @@ export class Gateway {
     });
   }
 
+  /** Enqueue message processing: same chat serialized, different chats parallel */
+  private async enqueueChat(msg: InboundMessage): Promise<void> {
+    const chatId = msg.chatId;
+    const prev = this.chatQueues.get(chatId) ?? Promise.resolve();
+    const next = prev
+      .then(() => this.handleMessage(msg))
+      .catch((err) => {
+        this.log.error(
+          { error: err instanceof Error ? err.message : String(err), chatId },
+          "Message handler error",
+        );
+      });
+    this.chatQueues.set(chatId, next);
+    next.finally(() => {
+      if (this.chatQueues.get(chatId) === next) this.chatQueues.delete(chatId);
+    });
+  }
+
   private async handleMessage(msg: InboundMessage): Promise<void> {
     const access = this.checkMessageAccess(msg);
     if (!access.allowed) {
@@ -184,13 +205,20 @@ export class Gateway {
 
     // Build message with metadata (sender, time, reply context)
     let messageText = formatMessageWithMeta(msg);
-    if (msg.attachments && msg.attachments.length > 0) {
+
+    // Collect all attachments to download (current message + reply media)
+    const allAttachments = [
+      ...(msg.attachments ?? []).map((a) => ({ att: a, source: "direct" as const })),
+      ...(msg.replyAttachments ?? []).map((a) => ({ att: a, source: "reply" as const })),
+    ];
+
+    if (allAttachments.length > 0) {
       // Trigger acquire to create the workspace dir
       this.processManager.acquire(session);
       const wsDir = this.processManager.getWorkspaceDir(session.sessionId);
       if (wsDir) {
         const downloadsDir = join(wsDir, "downloads");
-        for (const att of msg.attachments) {
+        for (const { att, source } of allAttachments) {
           try {
             const localPath = await this.telegram!.downloadFile(
               att.fileId,
@@ -198,9 +226,10 @@ export class Gateway {
               att.fileName,
             );
             att.localPath = localPath;
-            this.log.info({ fileId: att.fileId, localPath }, "Downloaded attachment");
+            this.log.info({ fileId: att.fileId, localPath, source }, "Downloaded attachment");
 
-            const fileRef = `[Attached ${att.type}: ${localPath}]`;
+            const label = source === "reply" ? `Replied-to ${att.type}` : `Attached ${att.type}`;
+            const fileRef = `[${label}: ${localPath}]`;
             messageText = messageText
               ? `${messageText}\n\n${fileRef}`
               : `Please read and process this file: ${localPath}`;
@@ -547,24 +576,46 @@ function formatAge(ms: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-/** Format message with sender name, timestamp, and reply context */
+/** Format message with sender name, timestamp, reply/quote context, and group history */
 function formatMessageWithMeta(msg: InboundMessage): string {
   const dt = new Date(msg.timestamp * 1000);
   const pad = (n: number) => String(n).padStart(2, "0");
   const ts = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
 
   const lines: string[] = [];
+
+  // Prepend recent group chat context (silent ingest buffer)
+  if (msg.isGroup) {
+    const groupContext = drainGroupHistory(msg.chatId);
+    if (groupContext) {
+      lines.push("--- Recent group chat context ---");
+      lines.push(groupContext);
+      lines.push("--- End of context ---");
+      lines.push("");
+    }
+  }
+
   lines.push(`[${ts}] ${msg.senderName}:`);
 
   if (msg.replyText) {
     const quoteName = msg.replySenderName ?? "Unknown";
-    const quoteText = msg.replyText.length > 200
-      ? msg.replyText.slice(0, 200) + "…"
-      : msg.replyText;
-    const quoteLines = quoteText.split("\n");
-    lines.push(`> ${quoteName}: ${quoteLines[0]}`);
-    for (let i = 1; i < quoteLines.length; i++) {
-      lines.push(`> ${quoteLines[i]}`);
+
+    if (msg.replyIsQuote) {
+      // Quote: user intentionally selected text — keep full content
+      const quoteLines = msg.replyText.split("\n");
+      lines.push(`> ${quoteName} (quoted): ${quoteLines[0]}`);
+      for (let i = 1; i < quoteLines.length; i++) {
+        lines.push(`> ${quoteLines[i]}`);
+      }
+    } else {
+      // Reply: full message already in Claude's history — head…tail to save tokens
+      const HEAD = 50;
+      const TAIL = 50;
+      const text = msg.replyText.replace(/\n/g, " ").trim();
+      const summary = text.length <= HEAD + TAIL + 10
+        ? text
+        : `${text.slice(0, HEAD)}…${text.slice(-TAIL)}`;
+      lines.push(`> ${quoteName}: ${summary}`);
     }
   }
 

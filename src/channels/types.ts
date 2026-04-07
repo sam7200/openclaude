@@ -11,7 +11,11 @@ export interface InboundMessage {
   replyToMessageId?: string;
   replyText?: string;
   replySenderName?: string;
+  /** True when the user selected specific text (quote), false for plain reply */
+  replyIsQuote?: boolean;
   attachments?: Attachment[];
+  /** Attachments extracted from the replied-to message (photo, document, etc.) */
+  replyAttachments?: Attachment[];
   raw: unknown;
 }
 
