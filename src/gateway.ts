@@ -3,7 +3,8 @@ import type { GatewayConfig } from "./config/types.js";
 import type { InboundMessage } from "./channels/types.js";
 import type { StreamEvent } from "./process/types.js";
 import { TelegramAdapter } from "./channels/telegram/adapter.js";
-import { drainGroupHistory } from "./channels/telegram/handlers.js";
+import { getRecentGroupContext, setMessageStore } from "./channels/telegram/handlers.js";
+import { MessageStore } from "./sessions/message-store.js";
 import { SessionManager } from "./sessions/manager.js";
 import { SessionStore } from "./sessions/store.js";
 import { ProcessManager } from "./process/manager.js";
@@ -32,6 +33,7 @@ export class Gateway {
   private chatCost = new Map<string, number>();
   /** Per-chat promise chain: serializes messages within a chat, parallel across chats */
   private chatQueues = new Map<string, Promise<void>>();
+  private messageStore: MessageStore;
 
   constructor(config: GatewayConfig, log: Logger) {
     this.config = config;
@@ -40,6 +42,9 @@ export class Gateway {
 
     const sessionStore = new SessionStore(join(this.dataDir, "sessions"));
     this.sessionManager = new SessionManager(sessionStore);
+
+    this.messageStore = new MessageStore(this.dataDir);
+    setMessageStore(this.messageStore);
 
     // Build extraArgs with model if configured
     const extraArgs = [...config.claude.extraArgs];
@@ -124,6 +129,7 @@ export class Gateway {
         telegram: this.telegram,
         dataDir: this.dataDir,
         log: this.log,
+        messageStore: this.messageStore,
       });
       await this.apiServer.start();
     }
@@ -586,7 +592,7 @@ function formatMessageWithMeta(msg: InboundMessage): string {
 
   // Prepend recent group chat context (silent ingest buffer)
   if (msg.isGroup) {
-    const groupContext = drainGroupHistory(msg.chatId);
+    const groupContext = getRecentGroupContext(msg.chatId, 20);
     if (groupContext) {
       lines.push("--- Recent group chat context ---");
       lines.push(groupContext);

@@ -7,6 +7,7 @@ import { spawnClaude, sendUserMessage, sendControlRequest, readUntilResult } fro
 import { getTelegramFileSkill } from "../skills/telegram-file.js";
 import { getSoulEditorSkill } from "../skills/soul-editor.js";
 import { getButtonSkill } from "../skills/telegram-buttons.js";
+import { getChatHistorySkill } from "../skills/chat-history.js";
 
 export interface ProcessManagerConfig {
   binary: string;
@@ -69,6 +70,7 @@ export class ProcessManager {
     parts.push(getTelegramFileSkill(this.config.apiPort, session.chatId));
     parts.push(getSoulEditorSkill(this.config.apiPort, this.config.botId));
     parts.push(getButtonSkill());
+    parts.push(getChatHistorySkill(this.config.apiPort, session.chatId));
 
     const extraArgs = [
       ...this.config.extraArgs,

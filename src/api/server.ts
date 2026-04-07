@@ -3,12 +3,14 @@ import { readFileSync, writeFileSync, unlinkSync, mkdirSync, existsSync } from "
 import { join, basename } from "node:path";
 import type { Logger } from "pino";
 import type { TelegramAdapter } from "../channels/telegram/adapter.js";
+import type { MessageStore } from "../sessions/message-store.js";
 
 export interface ApiServerConfig {
   port: number;
   telegram: TelegramAdapter;
   dataDir: string;
   log: Logger;
+  messageStore?: MessageStore;
 }
 
 export class ApiServer {
@@ -47,6 +49,8 @@ export class ApiServer {
         await this.handleSendMessage(req, res, url);
       } else if (url.pathname === "/api/soul") {
         await this.handleSoul(req, res, url);
+      } else if (req.method === "GET" && url.pathname === "/api/chat-history") {
+        await this.handleChatHistory(res, url);
       } else if (req.method === "GET" && url.pathname === "/api/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok" }));
@@ -176,6 +180,78 @@ export class ApiServer {
     res.writeHead(405, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Method not allowed" }));
   }
+
+  /**
+   * GET /api/chat-history?chat_id=xxx&since=1h&until=now&limit=100&sender=xxx&search=xxx
+   *
+   * Time specs: "30m", "2h", "1d", "3d", "7d", or ISO date "2026-04-07"
+   */
+  private async handleChatHistory(res: ServerResponse, url: URL): Promise<void> {
+    const store = this.config.messageStore;
+    if (!store) {
+      res.writeHead(501, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Message store not configured" }));
+      return;
+    }
+
+    const chatId = url.searchParams.get("chat_id");
+    if (!chatId) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing chat_id" }));
+      return;
+    }
+
+    const since = parseTimeSpec(url.searchParams.get("since"));
+    const until = parseTimeSpec(url.searchParams.get("until"));
+    const limit = Number(url.searchParams.get("limit")) || 100;
+    const sender = url.searchParams.get("sender") ?? undefined;
+    const search = url.searchParams.get("search") ?? undefined;
+
+    const messages = store.query({ chatId, since, until, limit, sender, search });
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, count: messages.length, messages }));
+  }
+}
+
+/**
+ * Parse a human-friendly time spec into epoch milliseconds.
+ * Supports: "30m", "2h", "1d", "7d", ISO date "2026-04-07", "today", "yesterday", null
+ */
+function parseTimeSpec(spec: string | null): number | undefined {
+  if (!spec) return undefined;
+
+  const now = Date.now();
+
+  if (spec === "today") {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+  if (spec === "yesterday") {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+  if (spec === "now") {
+    return now;
+  }
+
+  // Relative: "30m", "2h", "1d", "7d"
+  const relMatch = spec.match(/^(\d+)(m|h|d)$/);
+  if (relMatch) {
+    const val = Number(relMatch[1]);
+    const unit = relMatch[2];
+    const ms = unit === "m" ? val * 60_000 : unit === "h" ? val * 3_600_000 : val * 86_400_000;
+    return now - ms;
+  }
+
+  // ISO date: "2026-04-07"
+  const parsed = Date.parse(spec);
+  if (!isNaN(parsed)) return parsed;
+
+  return undefined;
 }
 
 function readBody(req: IncomingMessage): Promise<string> {

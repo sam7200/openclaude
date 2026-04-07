@@ -1,6 +1,7 @@
 import type { Bot, Context } from "grammy";
 import type { InboundMessage, MessageHandler, CommandHandler, Attachment } from "../types.js";
 import type { Logger } from "pino";
+import type { MessageStore, StoredMessage } from "../../sessions/message-store.js";
 
 /** Buffer for collecting media group messages that arrive as separate updates */
 const mediaGroupBuffers = new Map<string, {
@@ -11,43 +12,45 @@ const mediaGroupBuffers = new Map<string, {
 
 const MEDIA_GROUP_WAIT_MS = 500;
 
-/** Recent group message history for context (per chat) */
-export type GroupHistoryEntry = {
-  senderName: string;
-  text: string;
-  timestamp: number;
-  messageId: string;
-};
+/** Message store instance, set via setMessageStore() */
+let messageStore: MessageStore | undefined;
 
-const groupHistoryBuffers = new Map<string, GroupHistoryEntry[]>();
-const GROUP_HISTORY_MAX = 50;
-
-/** Record a group message into the history buffer (silent ingest) */
-function recordGroupHistory(chatId: string, entry: GroupHistoryEntry): void {
-  let buf = groupHistoryBuffers.get(chatId);
-  if (!buf) {
-    buf = [];
-    groupHistoryBuffers.set(chatId, buf);
-  }
-  buf.push(entry);
-  // Trim to max size
-  if (buf.length > GROUP_HISTORY_MAX) {
-    buf.splice(0, buf.length - GROUP_HISTORY_MAX);
-  }
+/** Set the persistent message store (called from gateway.ts) */
+export function setMessageStore(store: MessageStore): void {
+  messageStore = store;
 }
 
-/** Drain the group history buffer and return formatted context string */
-export function drainGroupHistory(chatId: string): string {
-  const buf = groupHistoryBuffers.get(chatId);
-  if (!buf || buf.length === 0) return "";
-  const lines = buf.map((e) => {
-    const dt = new Date(e.timestamp * 1000);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const ts = `${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
-    return `[${ts}] ${e.senderName}: ${e.text}`;
+/** Record a group message — persists to MessageStore if available, otherwise no-op */
+function recordGroupMessage(chatId: string, msg: {
+  messageId: string;
+  senderName: string;
+  senderId: string;
+  text: string;
+  timestamp: number;
+  media?: string[];
+}): void {
+  if (!messageStore) return;
+  messageStore.append(chatId, {
+    id: msg.messageId,
+    ts: msg.timestamp,
+    sender: msg.senderName,
+    senderId: msg.senderId,
+    text: msg.text,
+    media: msg.media,
   });
-  // Clear the buffer after draining
-  groupHistoryBuffers.delete(chatId);
+}
+
+/** Get recent group messages formatted as context string (peek, not drain) */
+export function getRecentGroupContext(chatId: string, count: number = 20): string {
+  if (!messageStore) return "";
+  const messages = messageStore.getRecent(chatId, count);
+  if (messages.length === 0) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const lines = messages.map((m) => {
+    const dt = new Date(m.ts * 1000);
+    const ts = `${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+    return `[${ts}] ${m.sender}: ${m.text}`;
+  });
   return lines.join("\n");
 }
 
@@ -80,11 +83,12 @@ export function registerHandlers(
       const result = checkGroupMention(ctx, msg, ctx.message.text);
       if (!result) {
         // Not targeted at bot — silently record for group context
-        recordGroupHistory(msg.chatId, {
+        recordGroupMessage(msg.chatId, {
+          messageId: msg.messageId,
           senderName: msg.senderName,
+          senderId: msg.senderId,
           text: ctx.message.text,
           timestamp: msg.timestamp,
-          messageId: msg.messageId,
         });
         return;
       }
@@ -106,11 +110,15 @@ export function registerHandlers(
     if (msg.isGroup) {
       const result = checkGroupMention(ctx, msg, caption);
       if (result === null) {
-        recordGroupHistory(msg.chatId, {
+        const photo = ctx.message.photo;
+        const largest = photo[photo.length - 1];
+        recordGroupMessage(msg.chatId, {
+          messageId: msg.messageId,
           senderName: msg.senderName,
+          senderId: msg.senderId,
           text: caption ? `[Photo] ${caption}` : "[Photo]",
           timestamp: msg.timestamp,
-          messageId: msg.messageId,
+          media: [`photo:${largest.file_id}`],
         });
         return;
       }
@@ -188,14 +196,17 @@ export function registerHandlers(
       // the caption (with @mention) is only on the first message
       const mediaGroupId = ctx.message.media_group_id;
       if (result === null && !mediaGroupId) {
-        const fileName = ctx.message.document?.file_name;
-        recordGroupHistory(msg.chatId, {
+        const doc = ctx.message.document;
+        const fileName = doc?.file_name;
+        recordGroupMessage(msg.chatId, {
+          messageId: msg.messageId,
           senderName: msg.senderName,
+          senderId: msg.senderId,
           text: caption
             ? `[File: ${fileName ?? "document"}] ${caption}`
             : `[File: ${fileName ?? "document"}]`,
           timestamp: msg.timestamp,
-          messageId: msg.messageId,
+          media: doc ? [`document:${doc.file_id}:${fileName ?? ""}`] : undefined,
         });
         return;
       }
