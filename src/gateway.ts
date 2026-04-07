@@ -310,23 +310,33 @@ export class Gateway {
 
           if (finalText.length > 0) {
             const { text: cleanText, buttons } = extractButtons(finalText);
+            const progressMsgId = progress.getMessageId();
 
-            // Always send final reply as a NEW message so the user gets a notification.
-            // The progress message stays as-is (shows tool execution history).
-            const chunks = splitMessage(cleanText);
             if (buttons.length > 0) {
+              // Buttons: delete progress message, send new message with buttons
+              if (progressMsgId) {
+                await this.telegram!.deleteMessage(msg.chatId, progressMsgId);
+              }
               const btnMsgId = await this.telegram!.sendWithButtons(
-                msg.chatId, chunks[0], buttons, msg.messageId,
+                msg.chatId, splitMessage(cleanText)[0], buttons, msg.messageId,
               );
               this.lastButtonMsg.set(msg.chatId, btnMsgId);
-              for (const chunk of chunks.slice(1)) {
+              for (const chunk of splitMessage(cleanText).slice(1)) {
+                await this.telegram!.send({ chatId: msg.chatId, text: chunk });
+              }
+            } else if (progressMsgId) {
+              // Has progress message: edit it to final content (no duplicate)
+              // Then send a lightweight "done" notification so user gets a ping
+              await this.telegram!.editMessage(msg.chatId, progressMsgId, splitMessage(cleanText)[0]);
+              for (const chunk of splitMessage(cleanText).slice(1)) {
                 await this.telegram!.send({ chatId: msg.chatId, text: chunk });
               }
             } else {
-              for (let i = 0; i < chunks.length; i++) {
+              // No progress message: send as new message
+              for (let i = 0; i < splitMessage(cleanText).length; i++) {
                 await this.telegram!.send({
                   chatId: msg.chatId,
-                  text: chunks[i],
+                  text: splitMessage(cleanText)[i],
                   ...(i === 0 ? { replyToMessageId: msg.messageId } : {}),
                 });
               }

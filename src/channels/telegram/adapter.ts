@@ -125,6 +125,15 @@ export class TelegramAdapter implements ChannelAdapter {
     });
   }
 
+  /** Delete a message */
+  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+    try {
+      await this.bot.api.deleteMessage(Number(chatId), Number(messageId));
+    } catch {
+      // ignore — message may already be deleted or too old
+    }
+  }
+
   /** Remove inline keyboard from a message */
   async removeButtons(chatId: string, messageId: string): Promise<void> {
     try {
