@@ -66,6 +66,7 @@ export class TelegramAdapter implements ChannelAdapter {
     // Register commands with Telegram so they show in the menu
     const commands = [
       { command: "new", description: "Start a new session" },
+      { command: "btw", description: "Quick side question without interrupting current work" },
       { command: "sessions", description: "List sessions or switch (e.g. /sessions 2)" },
       { command: "title", description: "Set session title (empty = auto)" },
       { command: "model", description: "Switch model (sonnet/opus/haiku)" },

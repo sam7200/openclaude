@@ -3,7 +3,8 @@ import { join } from "node:path";
 import type { Logger } from "pino";
 import type { ClaudeProcess, StreamEvent } from "./types.js";
 import type { Session } from "../sessions/types.js";
-import { spawnClaude, sendUserMessage, sendControlRequest, readUntilResult } from "./claude-cli.js";
+import { spawnClaude, sendUserMessage, sendControlRequest, readUntilResult, readStreamEvents } from "./claude-cli.js";
+import { spawn } from "node:child_process";
 import { getTelegramFileSkill } from "../skills/telegram-file.js";
 import { getSoulEditorSkill } from "../skills/soul-editor.js";
 import { getButtonSkill } from "../skills/telegram-buttons.js";
@@ -264,5 +265,52 @@ export class ProcessManager {
   hasProcess(sessionId: string): boolean {
     const cp = this.processes.get(sessionId);
     return !!cp && !cp.process.killed;
+  }
+
+  /** Check if a session's process is currently busy */
+  isBusy(sessionId: string): boolean {
+    return this.processes.get(sessionId)?.busy ?? false;
+  }
+
+  /**
+   * Fork a session and ask a one-shot question without blocking the main process.
+   * Uses --resume + --fork-session to share prompt cache.
+   * Returns an async generator of stream events (same as sendMessage).
+   */
+  async *forkAndAsk(session: Session, question: string): AsyncGenerator<StreamEvent> {
+    if (!session.claudeSessionId) return;
+
+    const cwd = join(this.config.workspaceDir, session.chatId, session.sessionId);
+    mkdirSync(cwd, { recursive: true });
+
+    const args = [
+      "-p",
+      "--output-format", "stream-json",
+      "--resume", session.claudeSessionId,
+      "--fork-session",
+      "--permission-mode", "bypassPermissions",
+      "--max-turns", "1",
+    ];
+
+    this.log.info(
+      { sessionId: session.sessionId, claudeSessionId: session.claudeSessionId },
+      "Forking session for /btw side question",
+    );
+
+    const proc = spawn(this.config.binary, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd,
+      env: { ...process.env },
+    });
+
+    proc.stderr?.on("data", (data: Buffer) => {
+      const text = data.toString().trim();
+      if (text) this.log.warn("btw stderr: " + text);
+    });
+
+    // Send question as plain text and close stdin
+    proc.stdin!.end(question + "\n");
+
+    yield* readUntilResult(proc);
   }
 }
