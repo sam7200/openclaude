@@ -31,7 +31,6 @@ export class Gateway {
   /** Track the last message with inline buttons per chat, so we can remove stale buttons */
   private lastButtonMsg = new Map<string, string>();
   /** Accumulated cost per chat (USD) */
-  private chatCost = new Map<string, number>();
   /** Per-chat promise chain: serializes messages within a chat, parallel across chats */
   private chatQueues = new Map<string, Promise<void>>();
   private messageStore: MessageStore;
@@ -190,9 +189,6 @@ export class Gateway {
       this.telegram.onCommand("model", (msg) => this.handleModel(msg));
       this.telegram.onCommand("effort", (msg) => this.handleEffort(msg));
       this.telegram.onCommand("stop", (msg) => this.handleInterrupt(msg));
-      this.telegram.onCommand("cost", (msg) => this.handleCost(msg));
-      this.telegram.onCommand("context", (msg) => this.handleContext(msg));
-      this.telegram.onCommand("settings", (msg) => this.handleSettings(msg));
       this.telegram.onCommand("title", (msg) => this.handleTitle(msg));
 
       // Register system callback handlers for session picker
@@ -482,12 +478,6 @@ export class Gateway {
 
         // --- Result: finalize ---
         if (event.type === "result") {
-          // Accumulate cost (field is total_cost_usd per Claude Code SDK schema)
-          const cost = event.total_cost_usd as number | undefined;
-          if (typeof cost === "number") {
-            this.chatCost.set(msg.chatId, (this.chatCost.get(msg.chatId) ?? 0) + cost);
-          }
-
           // Stop timer + await any in-flight flush BEFORE sending final message.
           // This prevents the timer-fired flush from overwriting the response.
           await progress.finish();
@@ -777,10 +767,7 @@ export class Gateway {
       "/model [name] — Switch model (sonnet/opus/haiku)",
       "/effort [level] — Set thinking depth (low/medium/high/max)",
       "/stop — Interrupt current task",
-      "/cost — Show accumulated cost",
-      "/context — Show context window usage",
       "/title [text] — Set session title (empty = auto-generate)",
-      "/settings — Show current settings",
       "/help — Show this help",
     ].join("\n");
     await this.telegram!.send({ chatId: msg.chatId, text });
@@ -863,64 +850,6 @@ export class Gateway {
       chatId: msg.chatId,
       text: sent ? "Interrupted." : "Nothing to interrupt.",
     });
-  }
-
-  private async handleCost(msg: InboundMessage): Promise<void> {
-    const access = this.checkMessageAccess(msg);
-    if (!access.allowed) return;
-
-    const cost = this.chatCost.get(msg.chatId) ?? 0;
-    await this.telegram!.send({
-      chatId: msg.chatId,
-      text: `Accumulated cost: $${cost.toFixed(4)}`,
-    });
-  }
-
-  private async handleContext(msg: InboundMessage): Promise<void> {
-    const access = this.checkMessageAccess(msg);
-    if (!access.allowed) return;
-
-    const session = this.sessionManager.resolve(msg.chatId, msg.channelType);
-    const resp = await this.processManager.sendControlAndWait(session.sessionId, { subtype: "get_context_usage" });
-    if (!resp) {
-      await this.telegram!.send({ chatId: msg.chatId, text: "No active process." });
-      return;
-    }
-    const text = formatControlResponse(resp, (r) => {
-      const lines: string[] = [];
-      if (r.total !== undefined && r.limit !== undefined) {
-        const pct = Math.round((Number(r.total) / Number(r.limit)) * 100);
-        lines.push(`Context: ${Number(r.total).toLocaleString()} / ${Number(r.limit).toLocaleString()} tokens (${pct}%)`);
-      }
-      if (r.breakdown && typeof r.breakdown === "object") {
-        for (const [k, v] of Object.entries(r.breakdown as Record<string, unknown>)) {
-          if (typeof v === "number" && v > 0) lines.push(`  ${k}: ${v.toLocaleString()}`);
-        }
-      }
-      return lines.length > 0 ? lines.join("\n") : null;
-    });
-    await this.telegram!.send({ chatId: msg.chatId, text });
-  }
-
-  private async handleSettings(msg: InboundMessage): Promise<void> {
-    const access = this.checkMessageAccess(msg);
-    if (!access.allowed) return;
-
-    const session = this.sessionManager.resolve(msg.chatId, msg.channelType);
-    const resp = await this.processManager.sendControlAndWait(session.sessionId, { subtype: "get_settings" });
-    if (!resp) {
-      await this.telegram!.send({ chatId: msg.chatId, text: "No active process." });
-      return;
-    }
-    const text = formatControlResponse(resp, (r) => {
-      const applied = r.applied as Record<string, unknown> | undefined;
-      if (!applied) return null;
-      const lines = ["Settings:"];
-      if (applied.model) lines.push(`  Model: ${applied.model}`);
-      if (applied.effort) lines.push(`  Effort: ${applied.effort}`);
-      return lines.length > 1 ? lines.join("\n") : null;
-    });
-    await this.telegram!.send({ chatId: msg.chatId, text });
   }
 
   private async handleTitle(msg: InboundMessage): Promise<void> {
@@ -1078,21 +1007,4 @@ function extractButtons(text: string): { text: string; buttons: string[] } {
 
   if (buttons.length === 0) return { text, buttons: [] };
   return { text: lines.slice(0, cutoff).join("\n").trimEnd(), buttons };
-}
-
-/** Format a control_response — handle both success and error subtypes */
-function formatControlResponse(
-  resp: Record<string, unknown>,
-  onSuccess: (data: Record<string, unknown>) => string | null,
-): string {
-  const r = (resp.response ?? resp) as Record<string, unknown>;
-  if (r.subtype === "error") {
-    const err = String(r.error ?? "Unknown error");
-    if (err.includes("Unsupported")) {
-      return `Not supported by your Claude Code version. Try updating:\n  npm install -g @anthropic-ai/claude-code`;
-    }
-    return `Error: ${err}`;
-  }
-  const formatted = onSuccess(r);
-  return formatted ?? JSON.stringify(r, null, 2).slice(0, 3000);
 }

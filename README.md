@@ -15,7 +15,7 @@ Each conversation spawns a real Claude Code process. Claude can read/write files
 - **Claude Code as engine** — not an API wrapper. Each session is a full Claude Code subprocess with tool use, file I/O, and bash access
 - **Session management** — `/new`, `/sessions` with inline buttons. Multiple sessions per chat, each with its own workspace
 - **`/btw` side questions** — ask a non-blocking question in parallel without interrupting the current session
-- **Rich commands** — `/model`, `/effort`, `/stop`, `/cost`, `/context`, `/settings` for live session control
+- **Rich commands** — `/model`, `/effort`, `/stop` for live session control
 - **Inline buttons** — session picker and choices rendered as tappable Telegram buttons; stale buttons auto-removed
 - **Access control** — allowlist + pairing code flow. No strangers can use your bot
 - **Group chat support** — responds to @mentions and replies; message history with sender/timestamp context injected into Claude
@@ -149,9 +149,6 @@ openclaude agent path               Print SOUL.md file path
 | `/model [name]` | Show or set the model (e.g. `opus`, `sonnet`) |
 | `/effort [level]` | Show or set effort level |
 | `/stop` | Interrupt Claude's current response |
-| `/cost` | Show session cost so far |
-| `/context` | Show context window usage |
-| `/settings` | Show current session settings |
 | `/help` | Show help |
 
 In groups, the bot responds when **@mentioned** or **replied to**.

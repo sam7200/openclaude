@@ -72,9 +72,6 @@ export class TelegramAdapter implements ChannelAdapter {
       { command: "model", description: "Switch model (sonnet/opus/haiku)" },
       { command: "effort", description: "Set thinking depth (low/medium/high/max)" },
       { command: "stop", description: "Interrupt current task" },
-      { command: "cost", description: "Show accumulated cost" },
-      { command: "context", description: "Show context window usage" },
-      { command: "settings", description: "Show current settings" },
       { command: "help", description: "Show help" },
     ];
     // Register for both default (DM) and group scopes

@@ -15,7 +15,7 @@ Telegram ←→ OpenClaude Gateway ←→ Claude Code CLI（子进程）
 - **以 Claude Code 为引擎** — 不是 API 封装。每个会话都是独立的 Claude Code 子进程，支持工具调用、文件 I/O 和 bash
 - **会话管理** — `/new`、`/sessions`（带内联按钮）。每个对话可有多个会话，各自独立工作区
 - **`/btw` 旁路提问** — 并行提问，不打断当前会话
-- **丰富的命令** — `/model`、`/effort`、`/stop`、`/cost`、`/context`、`/settings` 实时控制会话
+- **丰富的命令** — `/model`、`/effort`、`/stop` 实时控制会话
 - **内联按钮** — 会话选择器和选项以可点击的 Telegram 按钮形式呈现，过期按钮自动清除
 - **访问控制** — 白名单 + 配对码流程，陌生人无法使用你的 Bot
 - **群聊支持** — 响应 @提及和回复；自动注入带发言人、时间戳的消息历史供 Claude 参考
@@ -149,9 +149,6 @@ openclaude agent path              输出 SOUL.md 文件路径
 | `/model [名称]` | 查看或切换模型（如 `opus`、`sonnet`） |
 | `/effort [级别]` | 查看或设置思考力度 |
 | `/stop` | 打断 Claude 当前的回复 |
-| `/cost` | 查看当前会话费用 |
-| `/context` | 查看上下文窗口使用情况 |
-| `/settings` | 查看当前会话设置 |
 | `/help` | 显示帮助 |
 
 在群聊中，Bot 在被 **@提及** 或**被回复**时响应。
