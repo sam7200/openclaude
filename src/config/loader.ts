@@ -22,13 +22,9 @@ claude:
 auth:
   defaultPolicy: "pairing"
 
-channels:
-  telegram:
-    botToken: "\${TELEGRAM_BOT_TOKEN}"   # set env var or paste token here
-    dmPolicy: "pairing"
-    groupPolicy: "disabled"
-    allowFrom: []
-    groups: {}
+bots:
+  - name: "my-bot"
+    token: "\${TELEGRAM_BOT_TOKEN}"   # set env var or paste token here
 `;
 
 export function expandEnvVars(input: string): string {
@@ -50,7 +46,7 @@ export function loadConfig(configPath?: string): GatewayConfig {
     mkdirSync(dirname(resolvedPath), { recursive: true });
     writeFileSync(resolvedPath, DEFAULT_CONFIG);
     console.log(`Created default config at ${resolvedPath}`);
-    console.log(`Edit it to set your Telegram bot token, then run: openclaude gateway start`);
+    console.log(`Edit it to add your bot token under bots[], then run: openclaude gateway start`);
   }
 
   const content = readFileSync(resolvedPath, "utf-8");

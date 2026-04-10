@@ -2,7 +2,8 @@
 
 import { Command } from "commander";
 import pino from "pino";
-import { loadConfig } from "./config/loader.js";
+import { loadConfig, resolveBots } from "./config/loader.js";
+import type { GatewayConfig } from "./config/types.js";
 import { Gateway } from "./gateway.js";
 import { PairingManager } from "./auth/pairing.js";
 import { spawn, spawnSync } from "node:child_process";
@@ -39,6 +40,28 @@ function getLogDir(dataDir: string): string {
   const logDir = join(dataDir, "logs");
   mkdirSync(logDir, { recursive: true });
   return logDir;
+}
+
+/** Resolve a bot by name (or default if only one configured) */
+function resolveBotId(config: GatewayConfig, botName?: string): { botId: string; name: string } {
+  const bots = resolveBots(config);
+  if (bots.length === 0) {
+    console.error("No bots configured");
+    process.exit(1);
+  }
+  if (botName) {
+    const bot = bots.find(b => b.name === botName || b.botId === botName);
+    if (!bot) {
+      console.error(`Bot "${botName}" not found. Available: ${bots.map(b => b.name).join(", ")}`);
+      process.exit(1);
+    }
+    return { botId: bot.botId, name: bot.name };
+  }
+  if (bots.length === 1) {
+    return { botId: bots[0].botId, name: bots[0].name };
+  }
+  console.error(`Multiple bots configured. Specify --bot <name>: ${bots.map(b => b.name).join(", ")}`);
+  process.exit(1);
 }
 
 /** Read the lock file and return PID if process is alive */
@@ -333,8 +356,9 @@ gateway
 gateway
   .command("status")
   .description("Check if gateway is running")
-  .action(() => {
-    const dataDir = getDataDir();
+  .option("-c, --config <path>", "Path to config file")
+  .action((opts: { config?: string }) => {
+    const dataDir = getDataDir(opts.config);
     const lockPath = join(dataDir, "gateway.lock");
     const logFile = join(dataDir, "logs", "gateway.log");
 
@@ -346,7 +370,18 @@ gateway
       const lockData = JSON.parse(readFileSync(lockPath, "utf-8"));
       try {
         process.kill(lockData.pid, 0);
-        console.log(`Gateway is running (PID ${lockData.pid}, started ${lockData.createdAt})`);
+        console.log(`Gateway running (PID ${lockData.pid})`);
+
+        // Show configured bots
+        try {
+          const config = loadConfig(opts.config);
+          const bots = resolveBots(config);
+          if (bots.length > 0) {
+            const botList = bots.map(b => `${b.name} (${b.botId})`).join(", ");
+            console.log(`Bots: ${botList}`);
+          }
+        } catch {}
+
         if (existsSync(logFile)) {
           console.log(`Logs: ${logFile}`);
         }
@@ -387,9 +422,13 @@ const pairing = program.command("pairing").description("Manage pairing requests"
 pairing
   .command("list")
   .description("List pending pairing requests")
-  .action(() => {
-    const dataDir = getDataDir();
-    const pairingPath = join(dataDir, "credentials", "telegram-pairing.json");
+  .option("-c, --config <path>", "Path to config file")
+  .option("--bot <name>", "Bot name")
+  .action((opts: { config?: string; bot?: string }) => {
+    const dataDir = getDataDir(opts.config);
+    const config = loadConfig(opts.config);
+    const { botId } = resolveBotId(config, opts.bot);
+    const pairingPath = join(dataDir, "credentials", botId, "telegram-pairing.json");
     if (!existsSync(pairingPath)) {
       console.log("No pending pairing requests.");
       return;
@@ -415,11 +454,15 @@ pairing
   .command("approve")
   .description("Approve a pairing code")
   .argument("<code>", "Pairing code to approve")
+  .option("-c, --config <path>", "Path to config file")
+  .option("--bot <name>", "Bot name")
   .option("--notify", "Send approval notification to user")
-  .action((code: string) => {
-    const dataDir = getDataDir();
-    const pairingPath = join(dataDir, "credentials", "telegram-pairing.json");
-    const allowPath = join(dataDir, "credentials", "telegram-allowFrom.json");
+  .action((code: string, opts: { config?: string; bot?: string }) => {
+    const dataDir = getDataDir(opts.config);
+    const config = loadConfig(opts.config);
+    const { botId } = resolveBotId(config, opts.bot);
+    const pairingPath = join(dataDir, "credentials", botId, "telegram-pairing.json");
+    const allowPath = join(dataDir, "credentials", botId, "telegram-allowFrom.json");
     const pm = new PairingManager(pairingPath);
     const result = pm.approve(code);
     if (!result) {
@@ -434,7 +477,7 @@ pairing
     }
     if (!allowFrom.includes(result.senderId)) {
       allowFrom.push(result.senderId);
-      mkdirSync(join(dataDir, "credentials"), { recursive: true });
+      mkdirSync(join(dataDir, "credentials", botId), { recursive: true });
       const tmp = allowPath + ".tmp";
       writeFileSync(tmp, JSON.stringify({ version: 1, allowFrom }, null, 2));
       renameSync(tmp, allowPath);
@@ -449,9 +492,13 @@ allow
   .command("list")
   .description("List allowed users")
   .argument("[channel]", "Channel name", "telegram")
-  .action((channel: string) => {
-    const dataDir = getDataDir();
-    const allowPath = join(dataDir, "credentials", `${channel}-allowFrom.json`);
+  .option("-c, --config <path>", "Path to config file")
+  .option("--bot <name>", "Bot name")
+  .action((channel: string, opts: { config?: string; bot?: string }) => {
+    const dataDir = getDataDir(opts.config);
+    const config = loadConfig(opts.config);
+    const { botId } = resolveBotId(config, opts.bot);
+    const allowPath = join(dataDir, "credentials", botId, `${channel}-allowFrom.json`);
     if (!existsSync(allowPath)) {
       console.log(`No allowlist for ${channel}.`);
       return;
@@ -471,9 +518,13 @@ allow
   .description("Add user to allowlist")
   .argument("<channel>", "Channel name")
   .argument("<id>", "User ID")
-  .action((channel: string, id: string) => {
-    const dataDir = getDataDir();
-    const allowPath = join(dataDir, "credentials", `${channel}-allowFrom.json`);
+  .option("-c, --config <path>", "Path to config file")
+  .option("--bot <name>", "Bot name")
+  .action((channel: string, id: string, opts: { config?: string; bot?: string }) => {
+    const dataDir = getDataDir(opts.config);
+    const config = loadConfig(opts.config);
+    const { botId } = resolveBotId(config, opts.bot);
+    const allowPath = join(dataDir, "credentials", botId, `${channel}-allowFrom.json`);
     let allowFrom: string[] = [];
     if (existsSync(allowPath)) {
       try {
@@ -485,7 +536,7 @@ allow
       return;
     }
     allowFrom.push(id);
-    mkdirSync(join(dataDir, "credentials"), { recursive: true });
+    mkdirSync(join(dataDir, "credentials", botId), { recursive: true });
     const tmp = allowPath + ".tmp";
     writeFileSync(tmp, JSON.stringify({ version: 1, allowFrom }, null, 2));
     renameSync(tmp, allowPath);
@@ -497,9 +548,13 @@ allow
   .description("Remove user from allowlist")
   .argument("<channel>", "Channel name")
   .argument("<id>", "User ID")
-  .action((channel: string, id: string) => {
-    const dataDir = getDataDir();
-    const allowPath = join(dataDir, "credentials", `${channel}-allowFrom.json`);
+  .option("-c, --config <path>", "Path to config file")
+  .option("--bot <name>", "Bot name")
+  .action((channel: string, id: string, opts: { config?: string; bot?: string }) => {
+    const dataDir = getDataDir(opts.config);
+    const config = loadConfig(opts.config);
+    const { botId } = resolveBotId(config, opts.bot);
+    const allowPath = join(dataDir, "credentials", botId, `${channel}-allowFrom.json`);
     if (!existsSync(allowPath)) {
       console.log(`No allowlist for ${channel}.`);
       return;
@@ -526,17 +581,18 @@ agent
   .command("show")
   .description("Show current SOUL.md for the bot")
   .option("-c, --config <path>", "Path to config file")
-  .action((opts: { config?: string }) => {
+  .option("--bot <name>", "Bot name")
+  .action((opts: { config?: string; bot?: string }) => {
     const dataDir = getDataDir(opts.config);
     const config = loadConfig(opts.config);
-    const botId = config.channels?.telegram?.botToken?.split(":")[0] ?? "default";
+    const { botId, name } = resolveBotId(config, opts.bot);
     const soulPath = join(dataDir, "agents", botId, "SOUL.md");
     if (!existsSync(soulPath)) {
-      console.log(`No SOUL.md found for bot ${botId}.`);
+      console.log(`No SOUL.md found for bot ${name} (${botId}).`);
       console.log(`Create one with: openclaude agent edit`);
       return;
     }
-    console.log(`SOUL.md for bot ${botId} (${soulPath}):\n`);
+    console.log(`SOUL.md for bot ${name} (${soulPath}):\n`);
     console.log(readFileSync(soulPath, "utf-8"));
   });
 
@@ -544,10 +600,11 @@ agent
   .command("edit")
   .description("Edit SOUL.md in your default editor")
   .option("-c, --config <path>", "Path to config file")
-  .action((opts: { config?: string }) => {
+  .option("--bot <name>", "Bot name")
+  .action((opts: { config?: string; bot?: string }) => {
     const dataDir = getDataDir(opts.config);
     const config = loadConfig(opts.config);
-    const botId = config.channels?.telegram?.botToken?.split(":")[0] ?? "default";
+    const { botId } = resolveBotId(config, opts.bot);
     const agentDir = join(dataDir, "agents", botId);
     mkdirSync(agentDir, { recursive: true });
     const soulPath = join(agentDir, "SOUL.md");
@@ -570,27 +627,29 @@ agent
   .command("reset")
   .description("Delete SOUL.md (reset to default behavior)")
   .option("-c, --config <path>", "Path to config file")
-  .action((opts: { config?: string }) => {
+  .option("--bot <name>", "Bot name")
+  .action((opts: { config?: string; bot?: string }) => {
     const dataDir = getDataDir(opts.config);
     const config = loadConfig(opts.config);
-    const botId = config.channels?.telegram?.botToken?.split(":")[0] ?? "default";
+    const { botId, name } = resolveBotId(config, opts.bot);
     const soulPath = join(dataDir, "agents", botId, "SOUL.md");
     if (!existsSync(soulPath)) {
       console.log("No SOUL.md to remove.");
       return;
     }
     unlinkSync(soulPath);
-    console.log(`SOUL.md removed for bot ${botId}. Restart the gateway to apply.`);
+    console.log(`SOUL.md removed for bot ${name} (${botId}). Restart the gateway to apply.`);
   });
 
 agent
   .command("path")
   .description("Print the SOUL.md file path")
   .option("-c, --config <path>", "Path to config file")
-  .action((opts: { config?: string }) => {
+  .option("--bot <name>", "Bot name")
+  .action((opts: { config?: string; bot?: string }) => {
     const dataDir = getDataDir(opts.config);
     const config = loadConfig(opts.config);
-    const botId = config.channels?.telegram?.botToken?.split(":")[0] ?? "default";
+    const { botId } = resolveBotId(config, opts.bot);
     console.log(join(dataDir, "agents", botId, "SOUL.md"));
   });
 
