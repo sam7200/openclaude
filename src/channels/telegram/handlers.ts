@@ -104,16 +104,17 @@ export function registerHandlers(
     if (!msg) return;
 
     if (msg.isGroup) {
+      // Always record the original message for group chat history
+      recordGroupMessage(msg.chatId, {
+        messageId: msg.messageId,
+        senderName: msg.senderName,
+        senderId: msg.senderId,
+        text: ctx.message.text,
+        timestamp: msg.timestamp,
+      });
+
       const result = checkGroupMention(ctx, msg, ctx.message.text);
       if (!result) {
-        // Not targeted at bot — silently record for group context
-        recordGroupMessage(msg.chatId, {
-          messageId: msg.messageId,
-          senderName: msg.senderName,
-          senderId: msg.senderId,
-          text: ctx.message.text,
-          timestamp: msg.timestamp,
-        });
         return;
       }
       msg.text = result;
@@ -132,18 +133,20 @@ export function registerHandlers(
     const caption = ctx.message.caption ?? "";
 
     if (msg.isGroup) {
+      const photo = ctx.message.photo;
+      const largest = photo[photo.length - 1];
+      // Always record for group chat history
+      recordGroupMessage(msg.chatId, {
+        messageId: msg.messageId,
+        senderName: msg.senderName,
+        senderId: msg.senderId,
+        text: caption ? `[Photo] ${caption}` : "[Photo]",
+        timestamp: msg.timestamp,
+        media: [`photo:${largest.file_id}`],
+      });
+
       const result = checkGroupMention(ctx, msg, caption);
       if (result === null) {
-        const photo = ctx.message.photo;
-        const largest = photo[photo.length - 1];
-        recordGroupMessage(msg.chatId, {
-          messageId: msg.messageId,
-          senderName: msg.senderName,
-          senderId: msg.senderId,
-          text: caption ? `[Photo] ${caption}` : "[Photo]",
-          timestamp: msg.timestamp,
-          media: [`photo:${largest.file_id}`],
-        });
         return;
       }
       msg.text = result;
@@ -226,23 +229,25 @@ export function registerHandlers(
     const caption = ctx.message.caption ?? "";
 
     if (msg.isGroup) {
+      const doc = ctx.message.document;
+      const fileName = doc?.file_name;
+      // Always record for group chat history
+      recordGroupMessage(msg.chatId, {
+        messageId: msg.messageId,
+        senderName: msg.senderName,
+        senderId: msg.senderId,
+        text: caption
+          ? `[File: ${fileName ?? "document"}] ${caption}`
+          : `[File: ${fileName ?? "document"}]`,
+        timestamp: msg.timestamp,
+        media: doc ? [`document:${doc.file_id}:${fileName ?? ""}`] : undefined,
+      });
+
       const result = checkGroupMention(ctx, msg, caption);
       // For media groups, allow through even without mention —
       // the caption (with @mention) is only on the first message
       const mediaGroupId = ctx.message.media_group_id;
       if (result === null && !mediaGroupId) {
-        const doc = ctx.message.document;
-        const fileName = doc?.file_name;
-        recordGroupMessage(msg.chatId, {
-          messageId: msg.messageId,
-          senderName: msg.senderName,
-          senderId: msg.senderId,
-          text: caption
-            ? `[File: ${fileName ?? "document"}] ${caption}`
-            : `[File: ${fileName ?? "document"}]`,
-          timestamp: msg.timestamp,
-          media: doc ? [`document:${doc.file_id}:${fileName ?? ""}`] : undefined,
-        });
         return;
       }
       msg.text = result ?? "";
