@@ -462,6 +462,7 @@ export class BotInstance {
                 msg.chatId, splitMessage(cleanText)[0], buttons, msg.messageId,
               );
               this.lastButtonMsg.set(msg.chatId, btnMsgId);
+              this.telegram.notifyOutbound(msg.chatId, cleanText, btnMsgId);
               for (const chunk of splitMessage(cleanText).slice(1)) {
                 await this.telegram.send({ chatId: msg.chatId, text: chunk });
               }
