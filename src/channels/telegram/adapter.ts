@@ -98,13 +98,46 @@ export class TelegramAdapter implements ChannelAdapter {
       { command: "stop", description: "Interrupt current task" },
       { command: "help", description: "Show help" },
     ];
-    // Register for both default (DM) and group scopes
-    await this.bot.api.setMyCommands(commands);
-    await this.bot.api.setMyCommands(commands, {
-      scope: { type: "all_group_chats" },
-    });
+    // Register for both default (DM) and group scopes.
+    // setMyCommands is nice-to-have — transient network errors must NOT kill
+    // gateway startup. Retry a few times, then warn and continue if still failing.
+    await this.retryTgCall("setMyCommands(default)", () =>
+      this.bot.api.setMyCommands(commands),
+    );
+    await this.retryTgCall("setMyCommands(all_group_chats)", () =>
+      this.bot.api.setMyCommands(commands, { scope: { type: "all_group_chats" } }),
+    );
 
     this.startPollingWithRetry();
+  }
+
+  /**
+   * Wrap a Telegram API call with bounded retries. On final failure, log a
+   * warning and return undefined instead of throwing — for non-critical calls
+   * (e.g. setMyCommands) where a failed call shouldn't bring down the gateway.
+   */
+  private async retryTgCall<T>(label: string, fn: () => Promise<T>): Promise<T | undefined> {
+    const delays = [500, 1500]; // 3 attempts total: try → 500ms → 1500ms → give up
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt === 2) {
+          this.log.warn(
+            { call: label, error: msg },
+            `${label} failed after 3 attempts — continuing without it`,
+          );
+          return undefined;
+        }
+        this.log.info(
+          { call: label, error: msg, attempt: attempt + 1 },
+          `${label} failed, retrying...`,
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve, delays[attempt]));
+      }
+    }
+    return undefined;
   }
 
   private startPollingWithRetry(): void {
