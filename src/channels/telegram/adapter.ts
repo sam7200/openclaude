@@ -188,7 +188,9 @@ export class TelegramAdapter implements ChannelAdapter {
         // Fallback to plain text on parse error
         if (msg.parseMode && err instanceof Error && err.message?.includes("can't parse entities")) {
           this.log.warn({ parseMode: msg.parseMode }, "parse failed in send, falling back to plain text");
-          sent = await this.bot.api.sendMessage(Number(msg.chatId), msg.text.slice(i === 0 ? 0 : chunks.slice(0, i).join("").length, 4096), replyOpts);
+          const fallback = msg.plainFallback ?? msg.text;
+          const fallbackChunks = splitMessage(fallback);
+          sent = await this.bot.api.sendMessage(Number(msg.chatId), (fallbackChunks[i] ?? fallback).slice(0, 4096), replyOpts);
         } else {
           throw err;
         }
@@ -200,7 +202,7 @@ export class TelegramAdapter implements ChannelAdapter {
     return lastMessageId;
   }
 
-  async editMessage(chatId: string, messageId: string, text: string, buttons?: string[], parseMode?: "MarkdownV2" | "HTML"): Promise<void> {
+  async editMessage(chatId: string, messageId: string, text: string, buttons?: string[], parseMode?: "MarkdownV2" | "HTML", plainFallback?: string): Promise<void> {
     const truncated = text.slice(0, 4096);
     const btnOpts = buttons && buttons.length > 0
       ? { reply_markup: { inline_keyboard: buildButtonRows(buttons) } }
@@ -214,12 +216,13 @@ export class TelegramAdapter implements ChannelAdapter {
       this.recordOutbound(chatId, messageId, truncated);
     } catch (err: unknown) {
       if (err instanceof Error && err.message?.includes("message is not modified")) return;
-      // Fallback: retry as plain text on parse error
+      // Fallback: retry as plain text on parse error, using original text
       if (parseMode && err instanceof Error && err.message?.includes("can't parse entities")) {
         this.log.warn({ parseMode }, "parse failed in editMessage, falling back to plain text");
+        const fallbackText = (plainFallback ?? text).slice(0, 4096);
         try {
-          await this.bot.api.editMessageText(Number(chatId), Number(messageId), truncated, btnOpts);
-          this.recordOutbound(chatId, messageId, truncated);
+          await this.bot.api.editMessageText(Number(chatId), Number(messageId), fallbackText, btnOpts);
+          this.recordOutbound(chatId, messageId, fallbackText);
         } catch (e2: unknown) {
           if (e2 instanceof Error && !e2.message?.includes("message is not modified")) throw e2;
         }
@@ -270,7 +273,7 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   /** Send a message with a custom inline keyboard layout */
-  async sendWithKeyboard(chatId: string, text: string, keyboard: Array<Array<{ text: string; callback_data: string }>>, parseMode?: "MarkdownV2" | "HTML"): Promise<string> {
+  async sendWithKeyboard(chatId: string, text: string, keyboard: Array<Array<{ text: string; callback_data: string }>>, parseMode?: "MarkdownV2" | "HTML", plainFallback?: string): Promise<string> {
     const truncated = text.slice(0, 4096);
     const parseOpts = parseMode ? { parse_mode: parseMode } : {};
     try {
@@ -282,7 +285,8 @@ export class TelegramAdapter implements ChannelAdapter {
     } catch (err) {
       if (parseMode && err instanceof Error && err.message?.includes("can't parse entities")) {
         this.log.warn({ parseMode }, "parse failed in sendWithKeyboard, falling back");
-        const sent = await this.bot.api.sendMessage(Number(chatId), truncated, {
+        const fallbackText = (plainFallback ?? text).slice(0, 4096);
+        const sent = await this.bot.api.sendMessage(Number(chatId), fallbackText, {
           reply_markup: { inline_keyboard: keyboard },
         });
         return String(sent.message_id);
@@ -292,7 +296,7 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   /** Edit a message's text and inline keyboard */
-  async editMessageWithKeyboard(chatId: string, messageId: string, text: string, keyboard: Array<Array<{ text: string; callback_data: string }>>, parseMode?: "MarkdownV2" | "HTML"): Promise<void> {
+  async editMessageWithKeyboard(chatId: string, messageId: string, text: string, keyboard: Array<Array<{ text: string; callback_data: string }>>, parseMode?: "MarkdownV2" | "HTML", plainFallback?: string): Promise<void> {
     const truncated = text.slice(0, 4096);
     const parseOpts = parseMode ? { parse_mode: parseMode } : {};
     try {
@@ -304,8 +308,9 @@ export class TelegramAdapter implements ChannelAdapter {
       if (err instanceof Error && err.message?.includes("message is not modified")) return;
       if (parseMode && err instanceof Error && err.message?.includes("can't parse entities")) {
         this.log.warn({ parseMode }, "parse failed in editMessageWithKeyboard, falling back");
+        const fallbackText = (plainFallback ?? text).slice(0, 4096);
         try {
-          await this.bot.api.editMessageText(Number(chatId), Number(messageId), truncated, {
+          await this.bot.api.editMessageText(Number(chatId), Number(messageId), fallbackText, {
             reply_markup: { inline_keyboard: keyboard },
           });
         } catch (e2: unknown) {
@@ -318,7 +323,7 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   /** Send a message with inline keyboard buttons */
-  async sendWithButtons(chatId: string, text: string, buttons: (string | { text: string; data: string })[], replyToMessageId?: string, parseMode?: "MarkdownV2" | "HTML"): Promise<string> {
+  async sendWithButtons(chatId: string, text: string, buttons: (string | { text: string; data: string })[], replyToMessageId?: string, parseMode?: "MarkdownV2" | "HTML", plainFallback?: string): Promise<string> {
     const truncated = text.slice(0, 4096);
     const parseOpts = parseMode ? { parse_mode: parseMode } : {};
     const opts = {
@@ -335,9 +340,10 @@ export class TelegramAdapter implements ChannelAdapter {
     } catch (err) {
       if (parseMode && err instanceof Error && err.message?.includes("can't parse entities")) {
         this.log.warn({ parseMode }, "parse failed in sendWithButtons, falling back");
+        const fallbackText = (plainFallback ?? text).slice(0, 4096);
         const { parse_mode: _, ...plainOpts } = opts as Record<string, unknown>;
-        const sent = await this.bot.api.sendMessage(Number(chatId), truncated, plainOpts);
-        this.recordOutbound(chatId, String(sent.message_id), truncated);
+        const sent = await this.bot.api.sendMessage(Number(chatId), fallbackText, plainOpts);
+        this.recordOutbound(chatId, String(sent.message_id), fallbackText);
         return String(sent.message_id);
       }
       throw err;

@@ -456,24 +456,26 @@ export class BotInstance {
             const mdv2 = toMarkdownV2(cleanText);
             const chunks = splitMessage(mdv2);
 
+            const plainChunks = splitMessage(cleanText);
+
             if (buttons.length > 0) {
               if (progressMsgId) {
                 await this.telegram.deleteMessage(msg.chatId, progressMsgId);
               }
               const btnMsgId = await this.telegram.sendWithButtons(
-                msg.chatId, chunks[0], buttons, msg.messageId, "MarkdownV2",
+                msg.chatId, chunks[0], buttons, msg.messageId, "MarkdownV2", plainChunks[0],
               );
               this.lastButtonMsg.set(msg.chatId, btnMsgId);
               this.telegram.notifyOutbound(msg.chatId, cleanText, btnMsgId);
-              for (const chunk of chunks.slice(1)) {
-                await this.telegram.send({ chatId: msg.chatId, text: chunk, parseMode: "MarkdownV2" });
+              for (let ci = 1; ci < chunks.length; ci++) {
+                await this.telegram.send({ chatId: msg.chatId, text: chunks[ci], parseMode: "MarkdownV2", plainFallback: plainChunks[ci] });
               }
             } else if (progressMsgId) {
-              await this.telegram.editMessage(msg.chatId, progressMsgId, chunks[0], undefined, "MarkdownV2");
+              await this.telegram.editMessage(msg.chatId, progressMsgId, chunks[0], undefined, "MarkdownV2", plainChunks[0]);
               // Trigger relay for the final edited content
               this.telegram.notifyOutbound(msg.chatId, cleanText, progressMsgId);
-              for (const chunk of chunks.slice(1)) {
-                await this.telegram.send({ chatId: msg.chatId, text: chunk, parseMode: "MarkdownV2" });
+              for (let ci = 1; ci < chunks.length; ci++) {
+                await this.telegram.send({ chatId: msg.chatId, text: chunks[ci], parseMode: "MarkdownV2", plainFallback: plainChunks[ci] });
               }
             } else {
               for (let i = 0; i < chunks.length; i++) {
@@ -481,6 +483,7 @@ export class BotInstance {
                   chatId: msg.chatId,
                   text: chunks[i],
                   parseMode: "MarkdownV2",
+                  plainFallback: plainChunks[i],
                   ...(i === 0 ? { replyToMessageId: msg.messageId } : {}),
                 });
               }
@@ -616,10 +619,11 @@ export class BotInstance {
             const progressMsgId = progress.getMessageId();
             const mdv2 = toMarkdownV2(finalText);
             const chunks = splitMessage(mdv2);
+            const plainChunks = splitMessage(finalText);
             if (progressMsgId) {
-              await this.telegram.editMessage(msg.chatId, progressMsgId, chunks[0], undefined, "MarkdownV2");
-              for (const chunk of chunks.slice(1)) {
-                await this.telegram.send({ chatId: msg.chatId, text: chunk, parseMode: "MarkdownV2" });
+              await this.telegram.editMessage(msg.chatId, progressMsgId, chunks[0], undefined, "MarkdownV2", plainChunks[0]);
+              for (let ci = 1; ci < chunks.length; ci++) {
+                await this.telegram.send({ chatId: msg.chatId, text: chunks[ci], parseMode: "MarkdownV2", plainFallback: plainChunks[ci] });
               }
             } else {
               for (let i = 0; i < chunks.length; i++) {
@@ -627,6 +631,7 @@ export class BotInstance {
                   chatId: msg.chatId,
                   text: chunks[i],
                   parseMode: "MarkdownV2",
+                  plainFallback: plainChunks[i],
                   ...(i === 0 ? { replyToMessageId: msg.messageId } : {}),
                 });
               }

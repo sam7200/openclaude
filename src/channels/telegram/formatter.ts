@@ -3,7 +3,7 @@ import { convert } from "telegram-markdown-v2";
 const TELEGRAM_MAX_LENGTH = 4096;
 
 /**
- * Convert standard Markdown (as Claude outputs) to Telegram MarkdownV2.
+ * Convert standard Markdown to Telegram MarkdownV2.
  * Falls back to escaping all special chars if the converter throws.
  */
 export function toMarkdownV2(text: string): string {
@@ -34,24 +34,11 @@ export function splitMessage(text: string, maxLength = TELEGRAM_MAX_LENGTH): str
       splitIdx = maxLength;
     }
 
-    // Don't split in the middle of a MarkdownV2 escape sequence (\X)
-    if (splitIdx > 0 && remaining[splitIdx - 1] === "\\") {
-      splitIdx--;
-    }
-
     chunks.push(remaining.slice(0, splitIdx));
     remaining = remaining.slice(splitIdx).trimStart();
   }
 
   return chunks;
-}
-
-/** Truncate text without breaking MarkdownV2 escape sequences */
-export function truncateV2(text: string, maxLength = TELEGRAM_MAX_LENGTH): string {
-  if (text.length <= maxLength) return text;
-  let idx = maxLength;
-  if (idx > 0 && text[idx - 1] === "\\") idx--;
-  return text.slice(0, idx);
 }
 
 export function escapeMarkdownV2(text: string): string {

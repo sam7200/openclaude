@@ -31,6 +31,8 @@ export interface OutboundMessage {
   chatId: string;
   text: string;
   parseMode?: "MarkdownV2" | "HTML";
+  /** Original plain text used as fallback when parseMode rendering fails */
+  plainFallback?: string;
   replyToMessageId?: string;
   attachments?: OutboundAttachment[];
 }
@@ -49,7 +51,7 @@ export interface ChannelAdapter {
   start(): Promise<void>;
   stop(): Promise<void>;
   send(msg: OutboundMessage): Promise<string>;
-  editMessage(chatId: string, messageId: string, text: string, buttons?: string[], parseMode?: "MarkdownV2" | "HTML"): Promise<void>;
+  editMessage(chatId: string, messageId: string, text: string, buttons?: string[], parseMode?: "MarkdownV2" | "HTML", plainFallback?: string): Promise<void>;
   onMessage(handler: MessageHandler): void;
   onCommand(command: string, handler: CommandHandler): void;
   sendTyping(chatId: string): Promise<void>;
