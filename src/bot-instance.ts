@@ -359,7 +359,7 @@ export class BotInstance {
     // Inject peer bot hints for group chats
     if (msg.isGroup && this.peerBots.length > 0) {
       const botList = this.peerBots.map(b => `@${b.username} (${b.name})`).join(", ");
-      messageText = `[Group bots available to @mention: ${botList}]\n\n${messageText}`;
+      messageText = `[Group bots: ${botList} — Do NOT @mention other bots unless the user explicitly asks for bot-to-bot discussion. Mentioning another bot will trigger them to respond, so only do it when instructed.]\n\n${messageText}`;
     }
 
     // Collect all attachments to download (current message + reply media)
