@@ -298,7 +298,8 @@ export class BotInstance {
   /** Accept a relayed message from another bot in the same gateway */
   relayMessage(msg: InboundMessage): void {
     this.log.info({ from: msg.senderName, chatId: msg.chatId }, "Received relayed message");
-    this.enqueueChat(msg);
+    // Clear messageId — bots cannot reply_to other bots' messages in Telegram
+    this.enqueueChat({ ...msg, messageId: "" });
   }
 
   // --- Chat queue ---
