@@ -65,6 +65,11 @@ export class TelegramAdapter implements ChannelAdapter {
     this.outboundCallback = cb;
   }
 
+  /** Manually trigger the outbound callback (used after editMessage for final replies) */
+  notifyOutbound(chatId: string, text: string, messageId: string): void {
+    this.outboundCallback?.(chatId, text, messageId);
+  }
+
   onCommand(command: string, handler: CommandHandler): void {
     this.commandHandlers.set(command, handler);
   }
@@ -157,7 +162,7 @@ export class TelegramAdapter implements ChannelAdapter {
           : {}),
       });
       this.recordOutbound(chatId, messageId, truncated);
-      this.outboundCallback?.(chatId, truncated, messageId);
+      // Don't trigger relay on editMessage — only on send()
     } catch (err: unknown) {
       if (err instanceof Error && !err.message?.includes("message is not modified")) throw err;
     }

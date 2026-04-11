@@ -466,6 +466,8 @@ export class BotInstance {
               }
             } else if (progressMsgId) {
               await this.telegram.editMessage(msg.chatId, progressMsgId, splitMessage(cleanText)[0]);
+              // Trigger relay for the final edited content
+              this.telegram.notifyOutbound(msg.chatId, cleanText, progressMsgId);
               for (const chunk of splitMessage(cleanText).slice(1)) {
                 await this.telegram.send({ chatId: msg.chatId, text: chunk });
               }
