@@ -499,7 +499,7 @@ export class BotInstance {
       `Pairing code: ${req.code}`,
       "",
       "Ask the bot owner to approve with:",
-      `  openclaude pairing approve ${req.code}`,
+      `  openclaude pairing approve ${req.code} --bot ${this.config.name}`,
     ].join("\n");
     await this.telegram.send({ chatId: msg.chatId, text });
   }
@@ -519,7 +519,7 @@ export class BotInstance {
       `Pairing code: ${req.code}`,
       "",
       "Ask the bot owner to approve with:",
-      `  openclaude group approve ${req.code}`,
+      `  openclaude group approve ${req.code} --bot ${this.config.name}`,
     ].join("\n");
     await this.telegram.send({ chatId: msg.chatId, text });
   }
