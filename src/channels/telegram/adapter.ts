@@ -362,8 +362,13 @@ export class TelegramAdapter implements ChannelAdapter {
 
     const buffer = Buffer.from(await resp.arrayBuffer());
     const ext = filePath.includes(".") ? filePath.slice(filePath.lastIndexOf(".")) : "";
-    const localName = fileName ?? `${fileId.slice(0, 12)}${ext}`;
-    const localPath = join(destDir, localName);
+    // Use timestamp + fileId suffix to prevent collisions
+    const ts = Date.now();
+    const idSuffix = fileId.slice(-8);
+    const baseName = fileName
+      ? fileName.replace(/(\.[^.]+)$/, `_${ts}_${idSuffix}$1`).replace(/^([^.]+)$/, `$1_${ts}_${idSuffix}`)
+      : `${ts}_${idSuffix}${ext}`;
+    const localPath = join(destDir, baseName);
 
     mkdirSync(destDir, { recursive: true });
     writeFileSync(localPath, buffer);
