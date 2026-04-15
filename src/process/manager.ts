@@ -67,11 +67,11 @@ export class ProcessManager {
     }
 
     // Built-in skills
-    parts.push(getTelegramFileSkill(this.config.apiPort, session.chatId, botId, session.isGroup ?? false));
+    parts.push(getTelegramFileSkill(this.config.apiPort, session.chatId, session.threadId, botId, session.isGroup ?? false));
     parts.push(getSoulEditorSkill(this.config.apiPort, botId));
     parts.push(getButtonSkill());
     if (session.isGroup) {
-      parts.push(getChatHistorySkill(this.config.apiPort, session.chatId));
+      parts.push(getChatHistorySkill(this.config.apiPort, session.chatId, session.threadId));
     }
 
     // Use per-bot extraArgs if provided, otherwise fall back to config defaults
